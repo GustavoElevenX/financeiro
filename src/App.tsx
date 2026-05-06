@@ -137,6 +137,51 @@ const riskClass = {
   critico: 'critical',
 }
 
+const mergeById = <T extends { id: string }>(primary: T[], secondary: T[]) => [
+  ...primary,
+  ...secondary.filter((item) => !primary.some((current) => current.id === item.id)),
+]
+
+function hasLocalData(state?: AppState) {
+  if (!state) return false
+  return [
+    state.transactions,
+    state.accounts,
+    state.projects,
+    state.plannedItems,
+    state.dayReviews,
+    state.incomeSources,
+    state.creditCards,
+    state.cardPurchases,
+    state.scenarios,
+  ].some((items) => items.length > 0)
+}
+
+function mergeLocalIntoRemote(remote: AppState, local?: AppState) {
+  if (!local || !hasLocalData(local)) return ensureBaseState(remote)
+  const localState = ensureBaseState(local)
+  return ensureBaseState({
+    ...remote,
+    profile: remote.profile.name || remote.profile.familyName ? remote.profile : localState.profile,
+    familyMembers: mergeById(remote.familyMembers, localState.familyMembers),
+    accounts: mergeById(remote.accounts, localState.accounts),
+    categories: mergeById(remote.categories, localState.categories),
+    transactions: mergeById(remote.transactions, localState.transactions),
+    financialMonths: mergeById(remote.financialMonths, localState.financialMonths),
+    incomeSources: mergeById(remote.incomeSources, localState.incomeSources),
+    projects: mergeById(remote.projects, localState.projects),
+    plannedItems: mergeById(remote.plannedItems, localState.plannedItems),
+    creditCards: mergeById(remote.creditCards, localState.creditCards),
+    cardPurchases: mergeById(remote.cardPurchases, localState.cardPurchases),
+    dayReviews: mergeById(remote.dayReviews, localState.dayReviews),
+    classificationRules: mergeById(remote.classificationRules, localState.classificationRules),
+    aiInsights: mergeById(remote.aiInsights, localState.aiInsights),
+    scenarios: mergeById(remote.scenarios, localState.scenarios),
+    settings: remote.settings || localState.settings,
+    onboardingComplete: remote.onboardingComplete || localState.onboardingComplete,
+  })
+}
+
 function App() {
   const [state, setState] = useState<AppState>(emptyState)
   const [route, setRoute] = useState<RouteKey>('dashboard')
@@ -161,9 +206,14 @@ function App() {
     supabase.auth.getUser().then(({ data }) => {
       setUser(data.user)
       if (!data.user) {
-        setState(ensureBaseState(createInitialUserState()))
-        setHydrated(true)
-        setSyncMessage('Modo local')
+        loadLocalState()
+          .then((localState) => {
+            setState(ensureBaseState(localState ?? createInitialUserState()))
+          })
+          .finally(() => {
+            setHydrated(true)
+            setSyncMessage('Modo local - faça login para sincronizar com Supabase')
+          })
       }
     })
 
@@ -172,9 +222,14 @@ function App() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
       if (!session?.user) {
-        setState(ensureBaseState(createInitialUserState()))
-        setHydrated(true)
-        setSyncMessage('Modo local')
+        loadLocalState()
+          .then((localState) => {
+            setState(ensureBaseState(localState ?? createInitialUserState()))
+          })
+          .finally(() => {
+            setHydrated(true)
+            setSyncMessage('Modo local - faça login para sincronizar com Supabase')
+          })
       }
     })
 
@@ -192,14 +247,17 @@ function App() {
       }
     })
 
-    loadRemoteState(user)
-      .then(async (remoteState) => {
-        const nextState = ensureBaseState(remoteState ?? createInitialUserState(user.email))
-        if (!remoteState || JSON.stringify(remoteState) !== JSON.stringify(nextState)) await saveRemoteState(user.id, nextState)
+    Promise.all([loadRemoteState(user), loadLocalState()])
+      .then(async ([remoteState, localState]) => {
+        const baseRemote = ensureBaseState(remoteState ?? createInitialUserState(user.email))
+        const nextState = mergeLocalIntoRemote(baseRemote, localState)
+        if (!remoteState || hasLocalData(localState) || JSON.stringify(remoteState) !== JSON.stringify(nextState)) {
+          await saveRemoteState(user.id, nextState)
+        }
         if (active) {
           setState(nextState)
           setHydrated(true)
-          setSyncMessage(remoteState ? 'Sincronizado' : 'Perfil criado')
+          setSyncMessage(hasLocalData(localState) ? 'Local sincronizado com Supabase' : remoteState ? 'Sincronizado' : 'Perfil criado')
         }
       })
       .catch((error: Error) => {
@@ -227,8 +285,15 @@ function App() {
       return () => window.clearTimeout(id)
     }
 
-    if (!supabase) {
-      void saveLocalState(state)
+    if (!user) {
+      const id = window.setTimeout(() => {
+        saveLocalState(state)
+          .then(() => {
+            if (supabase) setSyncMessage('Modo local - faça login para sincronizar com Supabase')
+          })
+          .catch((error: Error) => setSyncMessage(error.message))
+      }, 300)
+      return () => window.clearTimeout(id)
     }
   }, [hydrated, state, user])
 
@@ -257,7 +322,7 @@ function App() {
   const page = {
     dashboard: <Dashboard state={state} snapshot={snapshot} selectedMonth={selectedMonth} setRoute={setRoute} addTransaction={addTransaction} />,
     onboarding: <Onboarding state={state} updateState={updateState} setRoute={setRoute} />,
-    lancamento: <QuickEntry state={state} addTransaction={addTransaction} updateState={updateState} />,
+    lancamento: <QuickEntry state={state} addTransaction={addTransaction} updateState={updateState} selectedMonth={selectedMonth} />,
     transacoes: <Transactions state={state} selectedMonth={selectedMonth} addTransaction={addTransaction} />,
     rendas: <IncomePage state={state} updateState={updateState} snapshot={snapshot} />,
     despesas: <ExpensesPage state={state} snapshot={snapshot} selectedMonth={selectedMonth} />,
@@ -276,23 +341,6 @@ function App() {
     ia: <AiPage state={state} snapshot={snapshot} />,
     configuracoes: <SettingsPage state={state} updateState={updateState} />,
   }[route]
-
-  if (supabase && hydrated && !user && syncMessage === '__never__') {
-    return (
-      <main className="auth-screen">
-        <div className="auth-card">
-          <div>
-            <span className="brand-icon">
-              <Wallet size={22} />
-            </span>
-            <h1>Analista Financeiro</h1>
-            <p>Entre com Supabase para usar dados reais. Nenhum dado demo será carregado.</p>
-          </div>
-          <AuthPanel />
-        </div>
-      </main>
-    )
-  }
 
   return (
     <div className="app-shell">
@@ -350,6 +398,7 @@ function App() {
             </button>
           </div>
         </header>
+        {supabase && !user && <AuthPanel />}
         {page}
       </main>
     </div>
@@ -455,10 +504,15 @@ function Dashboard({
 
       <section className="decision-month">
         <div>
-          <p className="eyebrow">Decisão financeira do mês</p>
+          <p className="eyebrow">Decisão financeira de hoje</p>
           <h2>{monthlyDecisionRecommendation(snapshot)}</h2>
         </div>
         <div className="decision-metrics">
+          <span>Precisa entrar: <strong>{money(snapshot.necessaryIncome)}</strong></span>
+          <span>Falta para bebê/casa/reserva: <strong>{money(snapshot.monthlyBabyGoal + snapshot.monthlyHomeGoal + snapshot.monthlyReserveGoal)}</strong></span>
+          <span>Risco atual: <strong>{riskCopy[snapshot.risk]}</strong></span>
+          <span>Não assumir agora: <strong>{snapshot.incomeGap > 0 || snapshot.cardIncomeRate > 0.35 ? 'parcela nova' : 'gasto sem prioridade'}</strong></span>
+          <span>Próxima ação: <strong>{snapshot.missingReviewDays.length ? 'regularizar dias pendentes' : snapshot.incomeGap > 0 ? 'buscar renda extra' : 'aportar nas metas'}</strong></span>
           <span>Renda atual: <strong>{money(snapshot.currentIncome)}</strong></span>
           <span>Renda necessária: <strong>{money(snapshot.necessaryIncome)}</strong></span>
           <span>Gap de renda: <strong>{money(snapshot.incomeGap)}</strong></span>
@@ -746,13 +800,16 @@ function QuickEntry({
   state,
   addTransaction,
   updateState,
+  selectedMonth,
 }: {
   state: AppState
   addTransaction: (transaction: Transaction) => void
   updateState: (updater: (current: AppState) => AppState) => void
+  selectedMonth: string
 }) {
-  const [entry, setEntry] = useState('50 gasolina nubank ontem')
-  const [statement, setStatement] = useState('25 ABR POSTO SHELL -50,00\n26 ABR PADARIA CENTRAL -12,50\n27 ABR PIX RECEBIDO +100,00\n30 ABR UBER -18,90')
+  const [entry, setEntry] = useState('')
+  const [statement, setStatement] = useState('')
+  const [statementMonth, setStatementMonth] = useState(selectedMonth)
   const [preview, setPreview] = useState<Transaction[]>([])
 
   const parsed = useMemo(() => parseQuickEntry(entry, state), [entry, state])
@@ -789,11 +846,15 @@ function QuickEntry({
 
       <Panel title="Importação de extrato com IA">
         <label className="field">
+          <span>Mês/ano de referência</span>
+          <input type="month" value={statementMonth} onChange={(event) => setStatementMonth(event.target.value)} />
+        </label>
+        <label className="field">
           <span>Extrato colado</span>
           <textarea value={statement} onChange={(event) => setStatement(event.target.value)} rows={6} />
         </label>
         <div className="button-row">
-          <button type="button" onClick={() => setPreview(parseStatement(statement, state))}>
+          <button type="button" onClick={() => setPreview(parseStatement(statement, state, statementMonth))}>
             <Upload size={18} />
             Classificar
           </button>
@@ -1062,7 +1123,7 @@ function IncomePage({
   updateState: (updater: (current: AppState) => AppState) => void
   snapshot: PlanningSnapshot
 }) {
-  const [form, setForm] = useState({ name: 'Freelancer', amount: 500, person: state.profile.name })
+  const [form, setForm] = useState({ name: '', amount: 0, person: state.profile.name })
 
   return (
     <div className="page-grid">
@@ -1078,7 +1139,8 @@ function IncomePage({
           <input type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: Number(event.target.value) })} />
           <button
             type="button"
-            onClick={() =>
+            disabled={!form.name.trim() || form.amount <= 0}
+            onClick={() => {
               updateState((current) => ({
                 ...current,
                 incomeSources: [
@@ -1095,7 +1157,8 @@ function IncomePage({
                   },
                 ],
               }))
-            }
+              setForm((current) => ({ ...current, name: '', amount: 0 }))
+            }}
           >
             <Plus size={18} />
             Adicionar
@@ -1169,7 +1232,7 @@ function CardsPage({
   snapshot: PlanningSnapshot
   addTransaction: (transaction: Transaction) => void
 }) {
-  const [purchase, setPurchase] = useState({ description: 'Compra parcelada', amount: 120, installments: 3 })
+  const [purchase, setPurchase] = useState({ description: '', amount: 0, installments: 1 })
   const card = state.creditCards[0]
   const futureInvoice = state.cardPurchases.reduce((sum, item) => {
     const parcel = item.amount / Math.max(item.installments, 1)
@@ -1225,7 +1288,8 @@ function CardsPage({
           <input type="number" value={purchase.installments} onChange={(event) => setPurchase({ ...purchase, installments: Number(event.target.value) })} />
           <button
             type="button"
-            onClick={() =>
+            disabled={!purchase.description.trim() || purchase.amount <= 0}
+            onClick={() => {
               updateState((current) => ({
                 ...current,
                 cardPurchases: [
@@ -1233,7 +1297,7 @@ function CardsPage({
                     id: makeId('cardp'),
                     cardId: card.id,
                     purchaseDate: todayIso(),
-                    description: purchase.description,
+                    description: purchase.description.trim(),
                     amount: purchase.amount,
                     installments: Math.max(purchase.installments, 1),
                     currentInstallment: 1,
@@ -1241,7 +1305,8 @@ function CardsPage({
                   ...current.cardPurchases,
                 ],
               }))
-            }
+              setPurchase({ description: '', amount: 0, installments: 1 })
+            }}
           >
             <Plus size={18} />
             Adicionar
@@ -1279,7 +1344,7 @@ function AccountsPage({
   updateState: (updater: (current: AppState) => AppState) => void
 }) {
   const [draft, setDraft] = useState({
-    name: 'Nova conta',
+    name: '',
     type: 'corrente' as AppState['accounts'][number]['type'],
     initialBalance: 0,
     currentBalance: 0,
@@ -1290,7 +1355,7 @@ function AccountsPage({
   return (
     <Panel title="Contas e caixinhas">
       <div className="manual-form">
-        <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Nome da conta" />
         <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as AppState['accounts'][number]['type'] })}>
           <option value="corrente">Corrente</option>
           <option value="poupanca">Poupança</option>
@@ -1314,7 +1379,8 @@ function AccountsPage({
         </select>
         <button
           type="button"
-          onClick={() =>
+          disabled={!draft.name.trim()}
+          onClick={() => {
             updateState((current) => ({
               ...current,
               accounts: [
@@ -1322,11 +1388,13 @@ function AccountsPage({
                 {
                   id: makeId('acc'),
                   ...draft,
+                  name: draft.name.trim(),
                   goalId: draft.goalId || undefined,
                 },
               ],
             }))
-          }
+            setDraft((current) => ({ ...current, name: '', initialBalance: 0, currentBalance: 0 }))
+          }}
         >
           <Plus size={18} />
           Adicionar
@@ -1424,7 +1492,7 @@ function ProjectFocus({
   addTransaction: (transaction: Transaction) => void
 }) {
   const project = state.projects.find((item) => item.type === type)
-  const [itemName, setItemName] = useState(type === 'bebe' ? 'Carrinho' : 'Item planejado')
+  const [itemName, setItemName] = useState('')
 
   if (!project) {
     return (
@@ -1466,10 +1534,11 @@ function ProjectFocus({
       </Panel>
       <Panel title="Itens planejados">
         <div className="form-inline">
-          <input value={itemName} onChange={(event) => setItemName(event.target.value)} />
+          <input value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Nome do item" />
           <button
             type="button"
-            onClick={() =>
+            disabled={!itemName.trim()}
+            onClick={() => {
               updateState((current) => ({
                 ...current,
                 plannedItems: [
@@ -1477,7 +1546,7 @@ function ProjectFocus({
                   {
                     id: makeId('item'),
                     projectId: project.id,
-                    name: itemName,
+                    name: itemName.trim(),
                     category: project.name,
                     estimatedAmount: 0,
                     realAmount: 0,
@@ -1486,13 +1555,14 @@ function ProjectFocus({
                   },
                 ],
               }))
-            }
+              setItemName('')
+            }}
           >
             <Plus size={18} />
             Adicionar
           </button>
         </div>
-        <PlannedItemsManager project={project} items={items} updateState={updateState} addTransaction={addTransaction} />
+        <PlannedItemsManager state={state} project={project} items={items} updateState={updateState} addTransaction={addTransaction} />
       </Panel>
       <Panel title="Novo lançamento vinculado">
         <ManualTransactionForm state={state} onSave={addTransaction} defaultType={type === 'reserva_emergencia' ? 'reserva_objetivo' : 'despesa'} defaultProjectId={project.id} />
@@ -1614,11 +1684,13 @@ function ProjectEditor({
 }
 
 function PlannedItemsManager({
+  state,
   project,
   items,
   updateState,
   addTransaction,
 }: {
+  state: AppState
   project: Project
   items: PlannedItem[]
   updateState: (updater: (current: AppState) => AppState) => void
@@ -1672,6 +1744,11 @@ function PlannedItemsManager({
 
   const markPaid = (item: PlannedItem) => {
     const amount = item.realAmount || item.estimatedAmount
+    const accountId = item.accountId || project.linkedAccountId || state.accounts.find((account) => account.goalId === project.id)?.id || state.accounts[0]?.id
+    if (!accountId) {
+      window.alert('Cadastre ou escolha uma conta para registrar o pagamento real.')
+      return
+    }
     addTransaction({
       id: makeId('tx'),
       transactionDate: todayIso(),
@@ -1680,7 +1757,7 @@ function PlannedItemsManager({
       amount,
       description: item.name,
       projectId: project.id,
-      accountId: item.accountId,
+      accountId,
       paymentMethod: 'pix',
       status: 'confirmed',
       source: 'manual',
@@ -1731,6 +1808,12 @@ function PlannedItemsManager({
           <option value="recebido">Recebido</option>
           <option value="cancelado">Cancelado</option>
         </select>
+        <select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>
+          <option value="">Conta sugerida</option>
+          {state.accounts.map((account) => (
+            <option key={account.id} value={account.id}>{account.name}</option>
+          ))}
+        </select>
         <input type="date" value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} />
         <input placeholder="Link de referência" value={draft.referenceUrl} onChange={(event) => setDraft({ ...draft, referenceUrl: event.target.value })} />
         <button type="button" onClick={() => addItem()}>Adicionar item</button>
@@ -1766,7 +1849,7 @@ function InvestmentsPage({ snapshot }: { snapshot: PlanningSnapshot }) {
         <span>
           {recommended > 0
             ? 'sugeridos para iniciar investimento sem comprometer metas obrigatórias.'
-            : 'recomendados agora, porque ainda existe gap para reserva, bebê ou casa.'}
+            : 'não recomendados agora, porque ainda existe gap para reserva, bebê ou casa.'}
         </span>
       </div>
       <div className="mini-metrics">
@@ -1798,7 +1881,7 @@ function Regularization({
       recalculateFinancialMonths({
         ...current,
         dayReviews: current.dayReviews.map((item) =>
-          item.id === review.id ? { ...item, status, reviewedAt: new Date().toISOString() } : item,
+          item.id === review.id ? { ...item, status, reviewedAt: status === 'pending' ? undefined : new Date().toISOString() } : item,
         ),
       }),
     )
@@ -1814,6 +1897,7 @@ function Regularization({
       transactionDate: review.date,
       competenceMonth: review.competenceMonth,
     })
+    markDay(review, 'reviewed')
     setQuickByDay((current) => ({ ...current, [review.date]: '' }))
   }
 
@@ -1824,7 +1908,7 @@ function Regularization({
         <span>
           {pending.length
             ? `Faltam revisar: ${pending.map((review) => formatShortDate(review.date)).join(', ')}.`
-            : 'Todos os dias estão revisados ou marcados sem movimento.'}
+            : `Todos os dias estão revisados ou marcados sem movimento. O mês fecha automaticamente; próxima ação: abrir ${readableMonth(monthKey())}.`}
         </span>
       </div>
       <div className="calendar-grid">
@@ -1842,12 +1926,16 @@ function Regularization({
               <button type="button" onClick={() => saveQuickForDay(review, 'ganho')}>+ ganho</button>
             </div>
             <DayTransactions state={state} date={review.date} />
-            {review.status === 'pending' && (
-              <div>
-                <button type="button" onClick={() => markDay(review, 'reviewed')}>Revisado</button>
-                <button type="button" onClick={() => markDay(review, 'no_movement')}>Sem mov.</button>
-              </div>
-            )}
+            <div>
+              {review.status === 'pending' ? (
+                <>
+                  <button type="button" onClick={() => markDay(review, 'reviewed')}>Marcar revisado</button>
+                  <button type="button" onClick={() => markDay(review, 'no_movement')}>Sem movimentação</button>
+                </>
+              ) : (
+                <button type="button" onClick={() => markDay(review, 'pending')}>Desfazer revisão</button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -2004,7 +2092,7 @@ function MonthlyPlanning({
   snapshot: PlanningSnapshot
   selectedMonth: string
 }) {
-  const [action, setAction] = useState('Uber, ElevenX, freelancer, corte de variável, adiar carro')
+  const [action, setAction] = useState('')
 
   return (
     <div className="page-grid">
@@ -2043,7 +2131,7 @@ function MonthlyPlanning({
 }
 
 function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapshot }) {
-  const [question, setQuestion] = useState('Qual é meu gap de renda para cumprir bebê, casa e reserva?')
+  const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -2212,7 +2300,7 @@ function SettingsPage({
 function AuthPanel() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [status, setStatus] = useState(supabase ? 'Aguardando login' : 'Configure Supabase para ativar login')
+  const [status, setStatus] = useState(supabase ? 'Faça login para sincronizar com Supabase' : 'Configure Supabase para ativar login')
 
   const runAuth = async (mode: 'login' | 'signup' | 'logout') => {
     if (!supabase) {

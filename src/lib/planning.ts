@@ -9,7 +9,11 @@ export const money = (value: number) =>
 export const percent = (value: number) =>
   `${Math.round((Number.isFinite(value) ? value : 0) * 100)}%`
 
-export const monthKey = (date = new Date()) => date.toISOString().slice(0, 7)
+export const monthKey = (date = new Date()) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  return `${year}-${month}`
+}
 
 export const readableMonth = (competenceMonth: string) => {
   const [year, month] = competenceMonth.split('-').map(Number)
@@ -93,12 +97,16 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
     .reduce((sum, transaction) => sum + transaction.amount, 0)
 
   const monthsWithHistory = new Set(state.transactions.map((transaction) => transaction.competenceMonth)).size || 1
-  const essentialBase = Math.max(essentialCost, historicalEssential / monthsWithHistory, 0)
-
   const reserveProject = projectByType.get('reserva_emergencia')
   const babyProject = projectByType.get('bebe')
   const homeProject = projectByType.get('casa')
   const carProject = projectByType.get('carro')
+  const essentialBase = Math.max(
+    essentialCost,
+    historicalEssential / monthsWithHistory,
+    reserveProject?.currentEssentialCost || 0,
+    reserveProject?.futureEssentialCost || 0,
+  )
 
   const emergencyMinimum = essentialBase * 3
   const emergencyComfortable = essentialBase * 6
@@ -110,6 +118,15 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
   const monthlyBabyGoal = monthlyGoal(babyProject)
   const monthlyHomeGoal = monthlyGoal(homeProject)
   const monthlyCarGoal = carProject?.isMandatory ? monthlyGoal(carProject) : 0
+  const carMonthlyCost =
+    carProject && (carProject.isMandatory || carProject.status === 'active')
+      ? (carProject.carInstallment || 0) +
+        (carProject.carFuel || 0) +
+        (carProject.carMaintenance || 0) +
+        (carProject.carInsurance || 0) -
+        (carProject.carUberIncome || 0)
+      : 0
+  const homeFutureCost = homeProject && (homeProject.deadline || homeProject.status === 'active') ? homeProject.futureMonthlyCost || 0 : 0
 
   const mandatoryMonthlyGoals = monthlyReserveGoal + monthlyBabyGoal + monthlyHomeGoal + monthlyCarGoal
   const safetyMargin = essentialBase * state.settings.safetyMarginRate
@@ -117,11 +134,12 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
     .filter((purchase) => purchase.purchaseDate.slice(0, 7) <= selectedMonth)
     .reduce((sum, purchase) => sum + purchase.amount / Math.max(purchase.installments, 1), 0)
   const cardIncomeRate = currentIncome > 0 ? cardImpact / currentIncome : 0
-  const futureCost = state.scenarios
+  const scenarioFutureCost = state.scenarios
     .filter((scenario) => scenario.type === 'alugar_casa' || scenario.type === 'morar_junto')
     .reduce((sum, scenario) => sum + scenario.monthlyExpense, 0)
+  const futureCost = homeFutureCost + Math.max(carMonthlyCost, 0) + scenarioFutureCost
 
-  const necessaryIncome = essentialBase + mandatoryMonthlyGoals + cardImpact + safetyMargin
+  const necessaryIncome = essentialBase + futureCost + mandatoryMonthlyGoals + cardImpact + safetyMargin
   const incomeGap = necessaryIncome - currentIncome
 
   const reservedBalance = state.accounts
@@ -131,7 +149,7 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
     .filter((account) => !goalAccountIds.has(account.id) && account.type !== 'cartao_credito')
     .reduce((sum, account) => sum + account.currentBalance, 0)
 
-  const realSurplus = currentIncome - essentialBase - mandatoryMonthlyGoals - cardImpact - safetyMargin
+  const realSurplus = currentIncome - essentialBase - futureCost - mandatoryMonthlyGoals - cardImpact - safetyMargin
 
   const reviewsForMonth = state.dayReviews.filter((review) => review.competenceMonth === selectedMonth)
   const missingReviewDays = reviewsForMonth

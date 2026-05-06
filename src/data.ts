@@ -1,6 +1,12 @@
 import type { Account, AppState, Category, ClassificationRule, FinancialMonth, Project } from './types'
 
-export const todayIso = () => new Date().toISOString().slice(0, 10)
+export const todayIso = () => {
+  const date = new Date()
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export const makeId = (prefix?: string) => {
   void prefix
@@ -233,7 +239,7 @@ export function createInitialUserState(email?: string): AppState {
     profile: {
       ...emptyState.profile,
       name: email?.split('@')[0] || '',
-      familyName: 'Família',
+      familyName: '',
     },
     categories,
     projects,
@@ -271,7 +277,7 @@ export function recalculateFinancialMonths(state: AppState): AppState {
     ...state.transactions.map((transaction) => transaction.competenceMonth),
     ...(state.financialMonths || []).map((item) => item.month),
   ])
-  const now = new Date().toISOString()
+  const now = `${todayIso()}T00:00:00.000`
 
   const financialMonths: FinancialMonth[] = Array.from(months)
     .filter(Boolean)
@@ -322,6 +328,10 @@ export function ensureBaseState(state: AppState): AppState {
     profile: { ...emptyState.profile, ...state.profile },
     settings: { ...emptyState.settings, ...state.settings },
     financialMonths: state.financialMonths || [],
+  }
+
+  if (!state.onboardingComplete && !state.transactions.length && next.profile.familyName === 'Família') {
+    next = { ...next, profile: { ...next.profile, familyName: '' } }
   }
 
   const categories = [...next.categories]

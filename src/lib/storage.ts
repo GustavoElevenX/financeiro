@@ -57,7 +57,7 @@ export const supabase =
     ? createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY)
     : null
 
-export const hasDeepSeekConfig = Boolean(import.meta.env.VITE_DEEPSEEK_API_KEY)
+export const hasDeepSeekConfig = Boolean(supabase || import.meta.env.VITE_AI_FUNCTION_URL)
 
 const asNumber = (value: unknown) => Number(value ?? 0)
 const asString = (value: unknown) => String(value ?? '')
@@ -596,30 +596,23 @@ export async function askDeepSeek(prompt: string) {
     return null
   }
 
-  const response = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${import.meta.env.VITE_DEEPSEEK_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: import.meta.env.VITE_DEEPSEEK_MODEL || 'deepseek-chat',
-      messages: [
-        {
-          role: 'system',
-          content:
-            'Você é um analista financeiro pessoal e familiar. Separe fatos, cálculos, interpretação, riscos, opções, recomendação e decisão do usuário.',
-        },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.2,
-    }),
-  })
+  if (import.meta.env.VITE_AI_FUNCTION_URL) {
+    const response = await fetch(import.meta.env.VITE_AI_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    })
 
-  if (!response.ok) {
-    throw new Error('Falha ao consultar DeepSeek')
+    if (!response.ok) throw new Error('Falha ao consultar IA')
+    const data = await response.json()
+    return data.content as string | undefined
   }
 
-  const data = await response.json()
-  return data.choices?.[0]?.message?.content as string | undefined
+  if (!supabase) return null
+
+  const { data, error } = await supabase.functions.invoke('ai', {
+    body: { prompt },
+  })
+  if (error) throw error
+  return data?.content as string | undefined
 }

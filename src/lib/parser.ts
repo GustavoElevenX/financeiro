@@ -1,9 +1,14 @@
-import { competenceFromDate, makeId } from '../data'
+import { competenceFromDate, makeId, todayIso } from '../data'
 import type { AppState, Transaction, TransactionType } from '../types'
 
 const today = () => new Date()
 
-const toIso = (date: Date) => date.toISOString().slice(0, 10)
+const toIso = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 const normalize = (value: string) =>
   value
@@ -42,6 +47,19 @@ const expenseWords = [
   'INTERNET',
   'FATURA',
 ]
+
+export function parseMoneyBR(text: string) {
+  const match = text.match(/([+-]?)\s*(?:R\$\s*)?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?/)
+  if (!match) return null
+  const integer = match[2].replace(/\./g, '')
+  const cents = match[3] ? match[3].padEnd(2, '0') : '00'
+  const value = Number(`${integer}.${cents}`)
+  return {
+    raw: match[0],
+    value: match[1] === '-' ? -value : value,
+    sign: match[1] as '' | '+' | '-',
+  }
+}
 
 const parseBrazilianDate = (text: string) => {
   const lower = normalize(text)
@@ -110,11 +128,10 @@ const transactionType = (text: string, amount: number): TransactionType => {
 }
 
 export function parseQuickEntry(input: string, state: AppState): Transaction | null {
-  const valueMatch = input.match(/[-+]?\s*(?:R\$\s*)?(\d+(?:[.,]\d{1,2})?)/i)
-  if (!valueMatch) return null
+  const parsedMoney = parseMoneyBR(input)
+  if (!parsedMoney) return null
 
-  const signed = input.trim().startsWith('-') ? -1 : 1
-  const amount = Math.abs(Number(valueMatch[1].replace(',', '.'))) * (signed < 0 ? -1 : 1)
+  const amount = parsedMoney.value
   const date = parseBrazilianDate(input)
   const type = transactionType(input, amount)
   const normalizedAmount = Math.abs(amount)
@@ -133,7 +150,7 @@ export function parseQuickEntry(input: string, state: AppState): Transaction | n
     type,
     amount: normalizedAmount,
     description: input
-      .replace(valueMatch[0], '')
+      .replace(parsedMoney.raw, '')
       .replace(/\b(hoje|ontem)\b/gi, '')
       .replace(/\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/g, '')
       .trim(),
@@ -165,7 +182,7 @@ const monthMap: Record<string, string> = {
   DEZ: '12',
 }
 
-export function parseStatement(statement: string, state: AppState): Transaction[] {
+function parseStatementLegacy(statement: string, state: AppState): Transaction[] {
   const parsed: Array<Transaction | null> = statement
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -200,4 +217,48 @@ export function parseStatement(statement: string, state: AppState): Transaction[
       } satisfies Transaction
     })
   return parsed.filter((transaction): transaction is Transaction => transaction !== null)
+}
+
+void parseStatementLegacy
+
+export function parseStatement(statement: string, state: AppState, referenceMonth = competenceFromDate(todayIso())): Transaction[] {
+  const [referenceYear, referenceMonthNumber] = referenceMonth.split('-').map(Number)
+  const parsed: Array<Transaction | null> = statement
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d{1,2})\s+([A-Za-zÇÃÁÉÍÓÚÂÊÔ]{3})\s+(.+?)\s+([+-]?\s*(?:R\$\s*)?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?)$/i)
+      if (!match) return null
+
+      const day = match[1].padStart(2, '0')
+      const month = monthMap[normalize(match[2]).slice(0, 3)] || String(referenceMonthNumber).padStart(2, '0')
+      let year = referenceYear
+      if (referenceMonthNumber === 1 && month === '12') year = referenceYear - 1
+      if (referenceMonthNumber === 12 && month === '01') year = referenceYear + 1
+      const date = `${year}-${month}-${day}`
+      const parsedMoney = parseMoneyBR(match[4])
+      if (!parsedMoney) return null
+      const amount = parsedMoney.value
+      const type = transactionType(`${match[3]} ${amount > 0 ? 'recebido' : ''}`, amount)
+
+      return {
+        id: makeId('tx'),
+        transactionDate: date,
+        competenceMonth: competenceFromDate(date),
+        type,
+        amount: Math.abs(amount),
+        description: match[3],
+        categoryId: categoryByKeyword(state, match[3]),
+        projectId: projectByKeyword(state, match[3]),
+        accountId: state.accounts[0]?.id,
+        paymentMethod: 'extrato',
+        status: 'confirmed',
+        source: 'statement',
+        aiConfidence: 0.82,
+        rawText: line,
+        syncStatus: 'salvo_localmente',
+      } satisfies Transaction
+    })
+  return parsed.filter((transaction): transaction is Transaction => Boolean(transaction))
 }
