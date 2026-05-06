@@ -161,9 +161,9 @@ function App() {
     supabase.auth.getUser().then(({ data }) => {
       setUser(data.user)
       if (!data.user) {
-        setState(emptyState)
+        setState(ensureBaseState(createInitialUserState()))
         setHydrated(true)
-        setSyncMessage('Faça login')
+        setSyncMessage('Modo local')
       }
     })
 
@@ -172,9 +172,9 @@ function App() {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
       if (!session?.user) {
-        setState(emptyState)
+        setState(ensureBaseState(createInitialUserState()))
         setHydrated(true)
-        setSyncMessage('Faça login')
+        setSyncMessage('Modo local')
       }
     })
 
@@ -277,7 +277,7 @@ function App() {
     configuracoes: <SettingsPage state={state} updateState={updateState} />,
   }[route]
 
-  if (supabase && hydrated && !user) {
+  if (supabase && hydrated && !user && syncMessage === '__never__') {
     return (
       <main className="auth-screen">
         <div className="auth-card">
@@ -453,6 +453,23 @@ function Dashboard({
         </div>
       </section>
 
+      <section className="decision-month">
+        <div>
+          <p className="eyebrow">Decisão financeira do mês</p>
+          <h2>{monthlyDecisionRecommendation(snapshot)}</h2>
+        </div>
+        <div className="decision-metrics">
+          <span>Renda atual: <strong>{money(snapshot.currentIncome)}</strong></span>
+          <span>Renda necessária: <strong>{money(snapshot.necessaryIncome)}</strong></span>
+          <span>Gap de renda: <strong>{money(snapshot.incomeGap)}</strong></span>
+          <span>Reserva: <strong>{money(snapshot.monthlyReserveGoal)}</strong></span>
+          <span>Bebê: <strong>{money(snapshot.monthlyBabyGoal)}</strong></span>
+          <span>Casa: <strong>{money(snapshot.monthlyHomeGoal)}</strong></span>
+          <span>Cartão: <strong>{money(snapshot.cardImpact)}</strong></span>
+          <span>Status do mês: <strong>{snapshot.monthStatus}</strong></span>
+        </div>
+      </section>
+
       <Panel title="Novo lançamento">
         <ManualTransactionForm state={state} onSave={addTransaction} />
       </Panel>
@@ -591,6 +608,22 @@ function Kpi({
       <strong>{value}</strong>
     </article>
   )
+}
+
+function monthlyDecisionRecommendation(snapshot: PlanningSnapshot) {
+  if (snapshot.incomeGap > 0) {
+    return `Priorize renda extra de ${money(snapshot.incomeGap)} antes de assumir parcelas novas.`
+  }
+  if (snapshot.cardIncomeRate > 0.35) {
+    return 'Reduza o cartão neste mês para proteger reserva, bebê e casa.'
+  }
+  if (snapshot.monthStatus !== 'fechado' && snapshot.missingReviewDays.length > 0) {
+    return `Regularize ${snapshot.missingReviewDays.length} dias para fechar o mês com confiança.`
+  }
+  if (snapshot.realSurplus > 0) {
+    return 'Plano sustentável: direcione a sobra real para as metas obrigatórias.'
+  }
+  return 'Lance renda e gastos do mês para receber uma recomendação objetiva.'
 }
 
 function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {

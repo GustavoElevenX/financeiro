@@ -306,6 +306,47 @@ td {
   color: #cbd5e1;
 }
 
+.decision-month {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.4fr);
+  gap: 18px;
+  align-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 20px;
+}
+
+.decision-month h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.18;
+  letter-spacing: 0;
+  color: #1e3a8a;
+}
+
+.decision-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.decision-metrics span {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.decision-metrics strong {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -854,7 +895,8 @@ td {
 
   .topbar,
   .hero-band,
-  .quick-layout {
+  .quick-layout,
+  .decision-month {
     display: grid;
   }
 
@@ -897,5 +939,9 @@ td {
 
   .calendar-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .decision-metrics {
+    grid-template-columns: 1fr;
   }
 }
