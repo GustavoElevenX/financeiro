@@ -261,6 +261,8 @@ export interface AppState {
 export interface PlanningSnapshot {
   currentMonth: string
   currentIncome: number
+  confirmedIncome: number
+  pendingIncome: number
   expectedIncome: number
   necessaryIncome: number
   incomeGap: number

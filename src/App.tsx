@@ -54,7 +54,7 @@ import {
   saveRemoteState,
   supabase,
 } from './lib/storage'
-import { parseQuickEntry, parseStatement } from './lib/parser'
+import { parseMoneyBR, parseQuickEntry, parseStatement } from './lib/parser'
 import {
   calculatePlanning,
   formatShortDate,
@@ -437,8 +437,20 @@ function pageTitle(route: RouteKey) {
 
 function applyTransaction(state: AppState, transaction: Transaction): AppState {
   const now = new Date().toISOString()
+  const projectGoalAccountId = transaction.projectId
+    ? state.accounts.find((account) => account.goalId === transaction.projectId)?.id
+    : undefined
+  const originAccountId =
+    transaction.accountId ||
+    state.accounts.find((account) => !account.isGoalAccount && account.type !== 'cartao_credito')?.id ||
+    state.accounts[0]?.id
+  const destinationAccountId =
+    transaction.destinationAccountId ||
+    ((transaction.type === 'reserva_objetivo' || transaction.type === 'transferencia') ? projectGoalAccountId : undefined)
   const normalizedTransaction: Transaction = {
     ...transaction,
+    accountId: originAccountId,
+    destinationAccountId,
     syncStatus: transaction.syncStatus || 'salvo_localmente',
     createdAt: transaction.createdAt || now,
     updatedAt: now,
@@ -542,7 +554,8 @@ function Dashboard({
           <h2>{monthlyDecisionRecommendation(snapshot)}</h2>
         </div>
         <div className="decision-metrics">
-          <span>Renda confirmada: <strong>{money(snapshot.currentIncome)}</strong></span>
+          <span>Renda confirmada: <strong>{money(snapshot.confirmedIncome)}</strong></span>
+          <span>Renda pendente: <strong>{money(snapshot.pendingIncome)}</strong></span>
           <span>Renda necessária para o plano: <strong>{money(snapshot.necessaryIncome)}</strong></span>
           <span>Gap do Plano Familiar: <strong>{money(snapshot.incomeGap)}</strong></span>
           <span>Status do mês: <strong>{snapshot.monthStatus}</strong></span>
@@ -559,6 +572,7 @@ function Dashboard({
 
       <section className="kpi-grid">
         <Kpi title="Renda atual" value={money(snapshot.currentIncome)} icon={CircleDollarSign} tone="good" />
+        <Kpi title="Renda confirmada por lançamentos" value={money(snapshot.confirmedIncome)} icon={CircleDollarSign} tone="good" />
         <Kpi title="Renda prevista" value={money(snapshot.expectedIncome)} icon={CircleDollarSign} tone="neutral" />
         <Kpi title="Renda necessária para viver o plano" value={money(snapshot.necessaryIncome)} icon={Wallet} tone="neutral" />
         <Kpi title="Gap do Plano Familiar" value={money(snapshot.incomeGap)} icon={AlertTriangle} tone={snapshot.incomeGap > 0 ? 'danger' : 'good'} />
@@ -872,7 +886,26 @@ function QuickEntry({
   const [movementType, setMovementType] = useState<Transaction['type']>('ganho')
   const [feedback, setFeedback] = useState('')
 
-  const parsed = useMemo(() => parseQuickEntry(entry, state), [entry, state])
+  const parsed = useMemo(() => {
+    const base = parseQuickEntry(entry, state)
+    if (!base) return null
+    const projectGoalAccountId = base.projectId
+      ? state.accounts.find((account) => account.goalId === base.projectId)?.id
+      : undefined
+    const originAccountId =
+      base.accountId ||
+      state.accounts.find((account) => !account.isGoalAccount && account.type !== 'cartao_credito')?.id ||
+      state.accounts[0]?.id
+    return {
+      ...base,
+      type: movementType,
+      accountId: originAccountId,
+      destinationAccountId:
+        movementType === 'reserva_objetivo' || movementType === 'transferencia'
+          ? base.destinationAccountId || projectGoalAccountId
+          : undefined,
+    } satisfies Transaction
+  }, [entry, movementType, state])
   void snapshot
   const movementOptions: Array<{ label: string; type: Transaction['type'] }> = [
     { label: 'Recebi dinheiro', type: 'ganho' },
@@ -889,7 +922,7 @@ function QuickEntry({
     addTransaction(transaction)
     const projected = calculatePlanning(applyTransaction(state, transaction), transaction.competenceMonth)
     setFeedback(
-      `${transaction.description || 'Movimento'} registrado: ${money(transaction.amount)}. Renda confirmada do mês: ${money(projected.currentIncome)}. Renda necessária para o Plano Familiar: ${money(projected.necessaryIncome)}. Gap do Plano Familiar: ${money(projected.incomeGap)}.`,
+      `${transaction.description || 'Movimento'} registrado: ${money(transaction.amount)}. Renda confirmada por lançamentos: ${money(projected.confirmedIncome)}. Renda pendente prevista: ${money(projected.pendingIncome)}. Renda considerada no Plano Familiar: ${money(projected.currentIncome)}. Renda necessária para o Plano Familiar: ${money(projected.necessaryIncome)}. Gap do Plano Familiar: ${money(projected.incomeGap)}.`,
     )
   }
 
@@ -1009,7 +1042,7 @@ function ManualTransactionForm({
 }) {
   const [form, setForm] = useState({
     type: defaultType,
-    amount: 0,
+    amount: '',
     transactionDate: defaultDate || todayIso(),
     competenceMonth: competenceFromDate(defaultDate || todayIso()),
     description: '',
@@ -1035,19 +1068,25 @@ function ManualTransactionForm({
   }, [defaultDate])
 
   const save = () => {
-    if (!form.amount || !form.description.trim()) return
+    const parsedAmount = parseMoneyBR(form.amount)
+    if (!parsedAmount || !form.description.trim()) return
     const now = new Date().toISOString()
+    const destinationAccountId =
+      form.destinationAccountId ||
+      ((form.type === 'reserva_objetivo' || form.type === 'transferencia') && form.projectId
+        ? state.accounts.find((account) => account.goalId === form.projectId)?.id
+        : undefined)
     onSave({
       id: makeId('tx'),
       transactionDate: form.transactionDate,
       competenceMonth: form.competenceMonth || competenceFromDate(form.transactionDate),
       type: form.type,
-      amount: Math.abs(Number(form.amount)),
+      amount: Math.abs(parsedAmount.value),
       description: form.description,
       categoryId: form.categoryId || undefined,
       projectId: form.projectId || undefined,
       accountId: form.accountId || undefined,
-      destinationAccountId: form.destinationAccountId || undefined,
+      destinationAccountId,
       paymentMethod: form.paymentMethod,
       status: form.status,
       source: 'manual',
@@ -1056,7 +1095,7 @@ function ManualTransactionForm({
       createdAt: now,
       updatedAt: now,
     })
-    setForm((current) => ({ ...current, amount: 0, description: '', notes: '' }))
+    setForm((current) => ({ ...current, amount: '', description: '', notes: '' }))
   }
 
   return (
@@ -1077,7 +1116,7 @@ function ManualTransactionForm({
       </label>
       <label className="field">
         <span>Valor</span>
-        <input type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: Number(event.target.value) })} />
+        <input inputMode="decimal" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} placeholder="1.033,33" />
       </label>
       <label className="field">
         <span>Data real</span>
@@ -1340,9 +1379,17 @@ function CardsPage({
 }) {
   const [purchase, setPurchase] = useState({ description: '', amount: 0, installments: 1 })
   const card = state.creditCards[0]
+  const monthNumberForCard = (competenceMonth: string) => {
+    const [year, month] = competenceMonth.split('-').map(Number)
+    return year * 12 + month
+  }
+  const currentMonthIndex = monthNumberForCard(snapshot.currentMonth)
   const futureInvoice = state.cardPurchases.reduce((sum, item) => {
     const parcel = item.amount / Math.max(item.installments, 1)
-    return sum + parcel * Math.max(item.installments - item.currentInstallment, 0)
+    const firstMonthIndex = monthNumberForCard(item.purchaseDate.slice(0, 7))
+    const elapsed = Math.max(currentMonthIndex - firstMonthIndex, 0)
+    const currentInstallment = Math.max((item.currentInstallment || 1) + elapsed, 1)
+    return sum + parcel * Math.max(item.installments - currentInstallment + 1, 0)
   }, 0)
   if (!card) {
     return (
@@ -2303,7 +2350,7 @@ function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapsh
 
   const fallbackAnswer = () => {
     const facts = [
-      `Dados analisados: renda atual ${money(snapshot.currentIncome)}, custo essencial ${money(snapshot.essentialCost)} e metas obrigatórias ${money(snapshot.mandatoryMonthlyGoals)}.`,
+      `Dados analisados: renda considerada ${money(snapshot.currentIncome)}, renda confirmada ${money(snapshot.confirmedIncome)}, renda pendente ${money(snapshot.pendingIncome)}, custo essencial ${money(snapshot.essentialCost)} e metas obrigatórias ${money(snapshot.mandatoryMonthlyGoals)}.`,
       `Cálculos principais: renda necessária para viver o plano ${money(snapshot.necessaryIncome)} e Gap do Plano Familiar ${money(snapshot.incomeGap)}.`,
       `Interpretação: ${snapshot.incomeGap > 0 ? 'o plano familiar depende de renda adicional ou ajuste de prazo.' : 'o plano está sustentável no mês atual.'}`,
       `Riscos: cartão em ${percent(snapshot.cardIncomeRate)} da renda e reserva necessária de ${money(snapshot.emergencyNeeded)}.`,

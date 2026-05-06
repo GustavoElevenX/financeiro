@@ -42,6 +42,11 @@ export const monthsUntil = (deadline?: string) => {
   return Math.max(raw, 1)
 }
 
+const monthNumber = (competenceMonth: string) => {
+  const [year, month] = competenceMonth.split('-').map(Number)
+  return year * 12 + month
+}
+
 export const monthlyGoal = (project?: Project) => {
   if (!project) return 0
   const missing = Math.max(project.targetAmount - project.reservedAmount - project.spentAmount, 0)
@@ -66,15 +71,12 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
   const projectByType = new Map(state.projects.map((project) => [project.type, project]))
   const goalAccountIds = new Set(state.accounts.filter((account) => account.isGoalAccount).map((account) => account.id))
 
-  const currentIncome =
-    monthTransactions
-      .filter((transaction) => transaction.type === 'ganho' || transaction.type === 'reembolso')
-      .reduce((sum, transaction) => sum + transaction.amount, 0) ||
-    state.incomeSources
-      .filter((income) => income.status === 'recebida')
-      .reduce((sum, income) => sum + income.receivedAmount, 0)
-
   const expectedIncome = state.incomeSources.reduce((sum, income) => sum + income.expectedAmount, 0)
+  const confirmedIncome = monthTransactions
+    .filter((transaction) => transaction.type === 'ganho' || transaction.type === 'reembolso')
+    .reduce((sum, transaction) => sum + transaction.amount, 0)
+  const pendingIncome = Math.max(expectedIncome - confirmedIncome, 0)
+  const currentIncome = confirmedIncome + pendingIncome
 
   const expenseTypes = new Set(['despesa', 'compra_planejada', 'pagamento_cartao', 'pagamento_parcela'])
   const totalExpenses = monthTransactions
@@ -119,9 +121,15 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
   const homeFutureCost = homeProject && (homeProject.deadline || homeProject.status === 'active') ? homeProject.futureMonthlyCost || 0 : 0
   const babyFutureCost = babyProject && (babyProject.deadline || babyProject.status === 'active') ? babyProject.futureMonthlyCost || 0 : 0
 
-  const cardImpact = state.cardPurchases
-    .filter((purchase) => purchase.purchaseDate.slice(0, 7) <= selectedMonth)
-    .reduce((sum, purchase) => sum + purchase.amount / Math.max(purchase.installments, 1), 0)
+  const selectedMonthIndex = monthNumber(selectedMonth)
+  const cardImpact = state.cardPurchases.reduce((sum, purchase) => {
+    const firstMonthIndex = monthNumber(purchase.purchaseDate.slice(0, 7))
+    const elapsed = selectedMonthIndex - firstMonthIndex
+    const currentInstallment = Math.max(purchase.currentInstallment || 1, 1)
+    const installmentForSelectedMonth = currentInstallment + elapsed
+    if (elapsed < 0 || installmentForSelectedMonth > purchase.installments) return sum
+    return sum + purchase.amount / Math.max(purchase.installments, 1)
+  }, 0)
   const cardIncomeRate = currentIncome > 0 ? cardImpact / currentIncome : 0
   const scenarioFutureCost = state.scenarios
     .filter((scenario) => scenario.type === 'alugar_casa' || scenario.type === 'morar_junto')
@@ -192,6 +200,8 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
   return {
     currentMonth: selectedMonth,
     currentIncome,
+    confirmedIncome,
+    pendingIncome,
     expectedIncome,
     necessaryIncome,
     incomeGap,
