@@ -146,6 +146,8 @@ create table if not exists transactions (
 );
 
 alter table transactions add column if not exists notes text;
+alter table transactions add column if not exists sync_status text default 'sincronizado';
+alter table transactions add column if not exists deleted_at timestamp with time zone null;
 
 create table if not exists financial_months (
   id uuid primary key default gen_random_uuid(),
@@ -196,6 +198,24 @@ create table if not exists planned_items (
 );
 
 alter table planned_items add column if not exists reference_url text;
+alter table planned_items add column if not exists deleted_at timestamp with time zone null;
+
+create table if not exists debts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) on delete cascade,
+  description text not null,
+  total_amount numeric not null,
+  installment_amount numeric default 0,
+  installments int default 1,
+  due_date date null,
+  project_id uuid references projects(id) on delete set null,
+  is_essential boolean default false,
+  status text default 'active',
+  sync_status text default 'sincronizado',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now(),
+  deleted_at timestamp with time zone null
+);
 
 create table if not exists recurring_items (
   id uuid primary key default gen_random_uuid(),
@@ -288,6 +308,7 @@ alter table day_reviews enable row level security;
 alter table projects enable row level security;
 alter table planned_items enable row level security;
 alter table recurring_items enable row level security;
+alter table debts enable row level security;
 alter table credit_cards enable row level security;
 alter table card_purchases enable row level security;
 alter table scenarios enable row level security;
@@ -308,6 +329,7 @@ drop policy if exists "day_reviews_own" on day_reviews;
 drop policy if exists "projects_own" on projects;
 drop policy if exists "planned_items_own" on planned_items;
 drop policy if exists "recurring_items_own" on recurring_items;
+drop policy if exists "debts_own" on debts;
 drop policy if exists "credit_cards_own" on credit_cards;
 drop policy if exists "card_purchases_own" on card_purchases;
 drop policy if exists "scenarios_own" on scenarios;
@@ -329,6 +351,7 @@ create policy "day_reviews_own" on day_reviews for all using (auth.uid() = user_
 create policy "projects_own" on projects for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "planned_items_own" on planned_items for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "recurring_items_own" on recurring_items for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "debts_own" on debts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "credit_cards_own" on credit_cards for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "card_purchases_own" on card_purchases for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "scenarios_own" on scenarios for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

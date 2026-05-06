@@ -117,7 +117,12 @@ const projectByKeyword = (state: AppState, text: string) => {
 const transactionType = (text: string, amount: number): TransactionType => {
   void amount
   const normalized = normalize(text)
-  if (normalized.includes('GUARDAR') || normalized.includes('RESERVAR') || normalized.includes('CAIXINHA')) return 'reserva_objetivo'
+  if (
+    normalized.includes('GUARDAR') ||
+    normalized.includes('RESERVAR') ||
+    normalized.includes('CAIXINHA') ||
+    (normalized.includes('RESERVA') && (normalized.includes('BEB') || normalized.includes('CASA') || normalized.includes('CARRO')))
+  ) return 'reserva_objetivo'
   if (normalized.includes('TRANSFERIR') || normalized.includes('ENVIADOS') || normalized.includes('TRANSFERENCIA')) return 'transferencia'
   if (normalized.includes('FATURA') || normalized.includes('PAGAMENTO CARTAO')) return 'pagamento_cartao'
   if (text.trim().startsWith('+')) return 'ganho'
@@ -131,6 +136,7 @@ export function parseQuickEntry(input: string, state: AppState): Transaction | n
   const parsedMoney = parseMoneyBR(input)
   if (!parsedMoney) return null
 
+  const now = new Date().toISOString()
   const amount = parsedMoney.value
   const date = parseBrazilianDate(input)
   const type = transactionType(input, amount)
@@ -164,6 +170,8 @@ export function parseQuickEntry(input: string, state: AppState): Transaction | n
     aiConfidence: 0.74,
     rawText: input,
     syncStatus: 'salvo_localmente',
+    createdAt: now,
+    updatedAt: now,
   }
 }
 
@@ -228,6 +236,7 @@ export function parseStatement(statement: string, state: AppState, referenceMont
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
+      const now = new Date().toISOString()
       const match = line.match(/^(\d{1,2})\s+([A-Za-zÇÃÁÉÍÓÚÂÊÔ]{3})\s+(.+?)\s+([+-]?\s*(?:R\$\s*)?(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?)$/i)
       if (!match) return null
 
@@ -258,6 +267,8 @@ export function parseStatement(statement: string, state: AppState, referenceMont
         aiConfidence: 0.82,
         rawText: line,
         syncStatus: 'salvo_localmente',
+        createdAt: now,
+        updatedAt: now,
       } satisfies Transaction
     })
   return parsed.filter((transaction): transaction is Transaction => Boolean(transaction))

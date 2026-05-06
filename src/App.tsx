@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
-  Baby,
   Bot,
   CalendarCheck,
-  Car,
   CheckCircle2,
   CircleDollarSign,
   CreditCard,
@@ -20,7 +18,6 @@ import {
   Send,
   Settings,
   Shield,
-  SlidersHorizontal,
   Upload,
   Wallet,
 } from 'lucide-react'
@@ -103,23 +100,14 @@ type RouteKey =
 
 const navItems: Array<{ key: RouteKey; label: string; icon: typeof LayoutDashboard }> = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { key: 'lancamento', label: 'Lançamento rápido', icon: Plus },
-  { key: 'transacoes', label: 'Transações', icon: ReceiptText },
-  { key: 'rendas', label: 'Rendas', icon: CircleDollarSign },
-  { key: 'despesas', label: 'Despesas', icon: Wallet },
-  { key: 'cartoes', label: 'Cartões', icon: CreditCard },
+  { key: 'onboarding', label: 'Plano Familiar', icon: Home },
+  { key: 'lancamento', label: 'Lançar Movimento', icon: Plus },
+  { key: 'metas', label: 'Projetos', icon: PiggyBank },
   { key: 'contas', label: 'Contas', icon: Landmark },
-  { key: 'metas', label: 'Metas', icon: PiggyBank },
-  { key: 'reserva', label: 'Reserva', icon: Shield },
-  { key: 'bebe', label: 'Bebê', icon: Baby },
-  { key: 'casa', label: 'Casa', icon: Home },
-  { key: 'carro', label: 'Carro', icon: Car },
-  { key: 'investimentos', label: 'Investimentos', icon: LineChartIcon },
+  { key: 'cartoes', label: 'Cartões e Dívidas', icon: CreditCard },
   { key: 'regularizacao', label: 'Regularização', icon: CalendarCheck },
-  { key: 'simulador', label: 'Simulador', icon: SlidersHorizontal },
   { key: 'historico', label: 'Histórico', icon: LineChartIcon },
-  { key: 'planejamento', label: 'Planejamento mensal', icon: CalendarCheck },
-  { key: 'ia', label: 'IA financeira', icon: Bot },
+  { key: 'ia', label: 'IA Financeira', icon: Bot },
   { key: 'configuracoes', label: 'Configurações', icon: Settings },
 ]
 
@@ -188,6 +176,7 @@ function App() {
   const [selectedMonth, setSelectedMonth] = useState(monthKey())
   const [hydrated, setHydrated] = useState(false)
   const [user, setUser] = useState<User | null>(null)
+  const [localMode, setLocalMode] = useState(false)
   const [syncMessage, setSyncMessage] = useState('Carregando')
 
   useEffect(() => {
@@ -275,26 +264,21 @@ function App() {
   useEffect(() => {
     if (!hydrated) return
 
-    if (supabase && user) {
-      queueMicrotask(() => setSyncMessage('Salvando'))
-      const id = window.setTimeout(() => {
-        saveRemoteState(user.id, state)
-          .then(() => setSyncMessage('Sincronizado'))
-          .catch((error: Error) => setSyncMessage(error.message))
-      }, 700)
-      return () => window.clearTimeout(id)
-    }
-
-    if (!user) {
-      const id = window.setTimeout(() => {
-        saveLocalState(state)
-          .then(() => {
-            if (supabase) setSyncMessage('Modo local - faça login para sincronizar com Supabase')
-          })
-          .catch((error: Error) => setSyncMessage(error.message))
-      }, 300)
-      return () => window.clearTimeout(id)
-    }
+    const id = window.setTimeout(() => {
+      saveLocalState(state)
+        .then(() => {
+          if (supabase && user) {
+            setSyncMessage('Salvo localmente; sincronizando Supabase')
+            return saveRemoteState(user.id, state)
+              .then(() => setSyncMessage('Sincronizado'))
+              .catch((error: Error) => setSyncMessage(`Pendente de sincronização: ${error.message}`))
+          }
+          setSyncMessage(supabase ? 'Salvo localmente - faça login para sincronizar com Supabase' : 'Salvo localmente')
+          return undefined
+        })
+        .catch((error: Error) => setSyncMessage(error.message))
+    }, 300)
+    return () => window.clearTimeout(id)
   }, [hydrated, state, user])
 
   const snapshot = useMemo(() => calculatePlanning(state, selectedMonth), [state, selectedMonth])
@@ -320,15 +304,15 @@ function App() {
   }
 
   const page = {
-    dashboard: <Dashboard state={state} snapshot={snapshot} selectedMonth={selectedMonth} setRoute={setRoute} addTransaction={addTransaction} />,
+    dashboard: <Dashboard state={state} snapshot={snapshot} selectedMonth={selectedMonth} setRoute={setRoute} />,
     onboarding: <Onboarding state={state} updateState={updateState} setRoute={setRoute} />,
-    lancamento: <QuickEntry state={state} addTransaction={addTransaction} updateState={updateState} selectedMonth={selectedMonth} />,
+    lancamento: <QuickEntry state={state} snapshot={snapshot} addTransaction={addTransaction} updateState={updateState} selectedMonth={selectedMonth} />,
     transacoes: <Transactions state={state} selectedMonth={selectedMonth} addTransaction={addTransaction} />,
     rendas: <IncomePage state={state} updateState={updateState} snapshot={snapshot} />,
     despesas: <ExpensesPage state={state} snapshot={snapshot} selectedMonth={selectedMonth} />,
     cartoes: <CardsPage state={state} updateState={updateState} snapshot={snapshot} addTransaction={addTransaction} />,
     contas: <AccountsPage state={state} updateState={updateState} />,
-    metas: <GoalsPage state={state} updateState={updateState} />,
+    metas: <ProjectsHub state={state} updateState={updateState} snapshot={snapshot} addTransaction={addTransaction} />,
     reserva: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="reserva_emergencia" addTransaction={addTransaction} />,
     bebe: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="bebe" addTransaction={addTransaction} />,
     casa: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="casa" addTransaction={addTransaction} />,
@@ -341,6 +325,14 @@ function App() {
     ia: <AiPage state={state} snapshot={snapshot} />,
     configuracoes: <SettingsPage state={state} updateState={updateState} />,
   }[route]
+
+  if (!hydrated) {
+    return <LoginScreen status="Carregando seus dados" onLocal={() => setLocalMode(true)} />
+  }
+
+  if (!user && !localMode) {
+    return <LoginScreen status={syncMessage} onLocal={() => setLocalMode(true)} />
+  }
 
   return (
     <div className="app-shell">
@@ -398,10 +390,44 @@ function App() {
             </button>
           </div>
         </header>
-        {supabase && !user && <AuthPanel />}
         {page}
       </main>
     </div>
+  )
+}
+
+function LoginScreen({ status, onLocal }: { status: string; onLocal: () => void }) {
+  return (
+    <main className="login-screen">
+      <section className="login-hero">
+        <div className="brand-icon">
+          <Wallet size={24} />
+        </div>
+        <p className="eyebrow">Analista Financeiro Pessoal/Familiar</p>
+        <h1>Entre para sincronizar seu Plano Familiar.</h1>
+        <p>
+          A plataforma abre pelo login para proteger seus lançamentos. Depois de entrar, cada movimento salva primeiro neste navegador e sincroniza com Supabase.
+        </p>
+        <div className="login-proof">
+          <span>Plano Familiar</span>
+          <span>Projetos de vida</span>
+          <span>IA financeira</span>
+        </div>
+      </section>
+      <section className="login-card">
+        <AuthPanel />
+        <div className="sync-panel">
+          <Database size={18} />
+          <div>
+            <strong>{status}</strong>
+            <small>{supabase ? 'Supabase configurado' : 'Supabase ausente no ambiente; modo local disponível'}</small>
+          </div>
+        </div>
+        <button type="button" onClick={onLocal}>
+          Continuar em modo local
+        </button>
+      </section>
+    </main>
   )
 }
 
@@ -410,32 +436,42 @@ function pageTitle(route: RouteKey) {
 }
 
 function applyTransaction(state: AppState, transaction: Transaction): AppState {
+  const now = new Date().toISOString()
+  const normalizedTransaction: Transaction = {
+    ...transaction,
+    syncStatus: transaction.syncStatus || 'salvo_localmente',
+    createdAt: transaction.createdAt || now,
+    updatedAt: now,
+  }
   const accounts = state.accounts.map((account) => {
-    if (transaction.type === 'ganho' && account.id === transaction.accountId) {
-      return { ...account, currentBalance: account.currentBalance + transaction.amount }
+    if (normalizedTransaction.type === 'ajuste_saldo' && account.id === normalizedTransaction.accountId) {
+      return { ...account, currentBalance: normalizedTransaction.amount }
+    }
+    if (normalizedTransaction.type === 'ganho' && account.id === normalizedTransaction.accountId) {
+      return { ...account, currentBalance: account.currentBalance + normalizedTransaction.amount }
     }
     if (
-      ['despesa', 'compra_planejada', 'pagamento_cartao', 'pagamento_parcela'].includes(transaction.type) &&
-      account.id === transaction.accountId
+      ['despesa', 'compra_planejada', 'pagamento_cartao', 'pagamento_parcela'].includes(normalizedTransaction.type) &&
+      account.id === normalizedTransaction.accountId
     ) {
-      return { ...account, currentBalance: account.currentBalance - transaction.amount }
+      return { ...account, currentBalance: account.currentBalance - normalizedTransaction.amount }
     }
-    if ((transaction.type === 'transferencia' || transaction.type === 'reserva_objetivo') && account.id === transaction.accountId) {
-      return { ...account, currentBalance: account.currentBalance - transaction.amount }
+    if ((normalizedTransaction.type === 'transferencia' || normalizedTransaction.type === 'reserva_objetivo') && account.id === normalizedTransaction.accountId) {
+      return { ...account, currentBalance: account.currentBalance - normalizedTransaction.amount }
     }
-    if ((transaction.type === 'transferencia' || transaction.type === 'reserva_objetivo') && account.id === transaction.destinationAccountId) {
-      return { ...account, currentBalance: account.currentBalance + transaction.amount }
+    if ((normalizedTransaction.type === 'transferencia' || normalizedTransaction.type === 'reserva_objetivo') && account.id === normalizedTransaction.destinationAccountId) {
+      return { ...account, currentBalance: account.currentBalance + normalizedTransaction.amount }
     }
     return account
   })
 
   const projects = state.projects.map((project) => {
-    if (project.id !== transaction.projectId) return project
-    if (transaction.type === 'reserva_objetivo' || transaction.type === 'transferencia') {
-      return { ...project, reservedAmount: project.reservedAmount + transaction.amount }
+    if (project.id !== normalizedTransaction.projectId) return project
+    if (normalizedTransaction.type === 'reserva_objetivo' || normalizedTransaction.type === 'transferencia') {
+      return { ...project, reservedAmount: project.reservedAmount + normalizedTransaction.amount }
     }
-    if (transaction.type === 'despesa' || transaction.type === 'compra_planejada') {
-      return { ...project, spentAmount: project.spentAmount + transaction.amount }
+    if (normalizedTransaction.type === 'despesa' || normalizedTransaction.type === 'compra_planejada') {
+      return { ...project, spentAmount: project.spentAmount + normalizedTransaction.amount }
     }
     return project
   })
@@ -444,8 +480,8 @@ function applyTransaction(state: AppState, transaction: Transaction): AppState {
     ...state,
     accounts,
     projects,
-    transactions: [transaction, ...state.transactions],
-  }, transaction.competenceMonth))
+    transactions: [normalizedTransaction, ...state.transactions],
+  }, normalizedTransaction.competenceMonth))
 }
 
 function Dashboard({
@@ -453,13 +489,11 @@ function Dashboard({
   snapshot,
   selectedMonth,
   setRoute,
-  addTransaction,
 }: {
   state: AppState
   snapshot: PlanningSnapshot
   selectedMonth: string
   setRoute: (route: RouteKey) => void
-  addTransaction: (transaction: Transaction) => void
 }) {
   const projectProgress = state.projects.map((project) => ({
     name: project.name,
@@ -504,35 +538,30 @@ function Dashboard({
 
       <section className="decision-month">
         <div>
-          <p className="eyebrow">Decisão financeira de hoje</p>
+          <p className="eyebrow">Decisão financeira do mês</p>
           <h2>{monthlyDecisionRecommendation(snapshot)}</h2>
         </div>
         <div className="decision-metrics">
-          <span>Precisa entrar: <strong>{money(snapshot.necessaryIncome)}</strong></span>
+          <span>Renda confirmada: <strong>{money(snapshot.currentIncome)}</strong></span>
+          <span>Renda necessária para o plano: <strong>{money(snapshot.necessaryIncome)}</strong></span>
+          <span>Gap do Plano Familiar: <strong>{money(snapshot.incomeGap)}</strong></span>
+          <span>Status do mês: <strong>{snapshot.monthStatus}</strong></span>
           <span>Falta para bebê/casa/reserva: <strong>{money(snapshot.monthlyBabyGoal + snapshot.monthlyHomeGoal + snapshot.monthlyReserveGoal)}</strong></span>
           <span>Risco atual: <strong>{riskCopy[snapshot.risk]}</strong></span>
           <span>Não assumir agora: <strong>{snapshot.incomeGap > 0 || snapshot.cardIncomeRate > 0.35 ? 'parcela nova' : 'gasto sem prioridade'}</strong></span>
           <span>Próxima ação: <strong>{snapshot.missingReviewDays.length ? 'regularizar dias pendentes' : snapshot.incomeGap > 0 ? 'buscar renda extra' : 'aportar nas metas'}</strong></span>
-          <span>Renda atual: <strong>{money(snapshot.currentIncome)}</strong></span>
-          <span>Renda necessária: <strong>{money(snapshot.necessaryIncome)}</strong></span>
-          <span>Gap de renda: <strong>{money(snapshot.incomeGap)}</strong></span>
           <span>Reserva: <strong>{money(snapshot.monthlyReserveGoal)}</strong></span>
           <span>Bebê: <strong>{money(snapshot.monthlyBabyGoal)}</strong></span>
           <span>Casa: <strong>{money(snapshot.monthlyHomeGoal)}</strong></span>
           <span>Cartão: <strong>{money(snapshot.cardImpact)}</strong></span>
-          <span>Status do mês: <strong>{snapshot.monthStatus}</strong></span>
         </div>
       </section>
-
-      <Panel title="Novo lançamento">
-        <ManualTransactionForm state={state} onSave={addTransaction} />
-      </Panel>
 
       <section className="kpi-grid">
         <Kpi title="Renda atual" value={money(snapshot.currentIncome)} icon={CircleDollarSign} tone="good" />
         <Kpi title="Renda prevista" value={money(snapshot.expectedIncome)} icon={CircleDollarSign} tone="neutral" />
-        <Kpi title="Renda necessária" value={money(snapshot.necessaryIncome)} icon={Wallet} tone="neutral" />
-        <Kpi title="Gap de renda" value={money(snapshot.incomeGap)} icon={AlertTriangle} tone={snapshot.incomeGap > 0 ? 'danger' : 'good'} />
+        <Kpi title="Renda necessária para viver o plano" value={money(snapshot.necessaryIncome)} icon={Wallet} tone="neutral" />
+        <Kpi title="Gap do Plano Familiar" value={money(snapshot.incomeGap)} icon={AlertTriangle} tone={snapshot.incomeGap > 0 ? 'danger' : 'good'} />
         <Kpi title="Gastos confirmados" value={money(snapshot.totalExpenses)} icon={ReceiptText} tone="danger" />
         <Kpi title="Status do mês" value={snapshot.monthStatus} icon={CalendarCheck} tone={snapshot.monthStatus === 'fechado' ? 'good' : 'warn'} />
         <Kpi title="Saldo livre real" value={money(snapshot.freeBalance)} icon={Landmark} tone="neutral" />
@@ -542,8 +571,35 @@ function Dashboard({
         <Kpi title="Sobra real" value={money(snapshot.realSurplus)} icon={LineChartIcon} tone={snapshot.realSurplus > 0 ? 'good' : 'danger'} />
       </section>
 
+      {snapshot.incomeGap > 0 && (
+        <Panel title="Por que existe esse gap?">
+          <div className="decision-metrics">
+            <span>Gastos essenciais: <strong>{money(snapshot.essentialCost)}</strong></span>
+            <span>Custo futuro familiar: <strong>{money(snapshot.futureCost)}</strong></span>
+            <span>Reserva de emergência: <strong>{money(snapshot.monthlyReserveGoal)}</strong></span>
+            <span>Bebê: <strong>{money(snapshot.monthlyBabyGoal)}</strong></span>
+            <span>Casa: <strong>{money(snapshot.monthlyHomeGoal)}</strong></span>
+            <span>Cartão/dívidas: <strong>{money(snapshot.cardImpact)}</strong></span>
+            <span>Margem de segurança: <strong>{money(snapshot.safetyMargin)}</strong></span>
+            <span>Renda confirmada: <strong>{money(snapshot.currentIncome)}</strong></span>
+          </div>
+        </Panel>
+      )}
+
+      <Panel title="Ações práticas">
+        <div className="button-row">
+          <button type="button" onClick={() => setRoute('lancamento')}>Lançar renda</button>
+          <button type="button" onClick={() => setRoute('lancamento')}>Lançar despesa</button>
+          <button type="button" onClick={() => setRoute('lancamento')}>Reservar para bebê</button>
+          <button type="button" onClick={() => setRoute('lancamento')}>Reservar para casa</button>
+          <button type="button" onClick={() => setRoute('onboarding')}>Revisar Plano Familiar</button>
+          <button type="button" onClick={() => setRoute('regularizacao')}>Regularizar dias</button>
+          <button type="button" onClick={() => setRoute('ia')}>Perguntar à IA</button>
+        </div>
+      </Panel>
+
       <section className="split-grid">
-        <Panel title="Metas obrigatórias" action={<button type="button" onClick={() => setRoute('metas')}>Abrir</button>}>
+        <Panel title="Projetos de vida" action={<button type="button" onClick={() => setRoute('metas')}>Abrir</button>}>
           <div className="progress-list">
             {state.projects
               .filter((project) => project.isMandatory)
@@ -666,7 +722,7 @@ function Kpi({
 
 function monthlyDecisionRecommendation(snapshot: PlanningSnapshot) {
   if (snapshot.incomeGap > 0) {
-    return `Priorize renda extra de ${money(snapshot.incomeGap)} antes de assumir parcelas novas.`
+    return `O Gap do Plano Familiar é ${money(snapshot.incomeGap)}. Priorize renda extra e dinheiro para bebê/casa antes de carro ou investimentos.`
   }
   if (snapshot.cardIncomeRate > 0.35) {
     return 'Reduza o cartão neste mês para proteger reserva, bebê e casa.'
@@ -677,7 +733,7 @@ function monthlyDecisionRecommendation(snapshot: PlanningSnapshot) {
   if (snapshot.realSurplus > 0) {
     return 'Plano sustentável: direcione a sobra real para as metas obrigatórias.'
   }
-  return 'Lance renda e gastos do mês para receber uma recomendação objetiva.'
+  return 'Lance movimentos reais do mês para receber uma recomendação objetiva.'
 }
 
 function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
@@ -752,19 +808,19 @@ function SetupChecklist({
   const items = [
     !state.incomeSources.some((income) => income.expectedAmount > 0 || income.receivedAmount > 0) && {
       text: 'Informe renda atual para calcular o gap familiar.',
-      route: 'rendas' as RouteKey,
+      route: 'onboarding' as RouteKey,
     },
     snapshot.essentialCost <= 0 && {
       text: 'Informe gastos essenciais para calcular a reserva de emergência.',
-      route: 'despesas' as RouteKey,
+      route: 'onboarding' as RouteKey,
     },
     !home?.deadline && {
       text: 'Defina a data alvo da casa para calcular a renda necessária.',
-      route: 'casa' as RouteKey,
+      route: 'onboarding' as RouteKey,
     },
     !baby?.deadline && !state.profile.babyExpectedDate && {
       text: 'Informe a previsão de nascimento para calcular a meta mensal do bebê.',
-      route: 'bebe' as RouteKey,
+      route: 'onboarding' as RouteKey,
     },
     !reserveAccount && {
       text: 'Crie ou vincule uma conta para a reserva.',
@@ -798,11 +854,13 @@ function SetupChecklist({
 
 function QuickEntry({
   state,
+  snapshot,
   addTransaction,
   updateState,
   selectedMonth,
 }: {
   state: AppState
+  snapshot: PlanningSnapshot
   addTransaction: (transaction: Transaction) => void
   updateState: (updater: (current: AppState) => AppState) => void
   selectedMonth: string
@@ -811,16 +869,52 @@ function QuickEntry({
   const [statement, setStatement] = useState('')
   const [statementMonth, setStatementMonth] = useState(selectedMonth)
   const [preview, setPreview] = useState<Transaction[]>([])
+  const [movementType, setMovementType] = useState<Transaction['type']>('ganho')
+  const [feedback, setFeedback] = useState('')
 
   const parsed = useMemo(() => parseQuickEntry(entry, state), [entry, state])
+  void snapshot
+  const movementOptions: Array<{ label: string; type: Transaction['type'] }> = [
+    { label: 'Recebi dinheiro', type: 'ganho' },
+    { label: 'Gastei dinheiro', type: 'despesa' },
+    { label: 'Reservei para uma meta', type: 'reserva_objetivo' },
+    { label: 'Transferi entre contas', type: 'transferencia' },
+    { label: 'Comprei item planejado', type: 'compra_planejada' },
+    { label: 'Paguei cartão', type: 'pagamento_cartao' },
+    { label: 'Criei uma dívida/parcela', type: 'pagamento_parcela' },
+    { label: 'Ajustei saldo', type: 'ajuste_saldo' },
+  ]
+
+  const saveWithFeedback = (transaction: Transaction) => {
+    addTransaction(transaction)
+    const projected = calculatePlanning(applyTransaction(state, transaction), transaction.competenceMonth)
+    setFeedback(
+      `${transaction.description || 'Movimento'} registrado: ${money(transaction.amount)}. Renda confirmada do mês: ${money(projected.currentIncome)}. Renda necessária para o Plano Familiar: ${money(projected.necessaryIncome)}. Gap do Plano Familiar: ${money(projected.incomeGap)}.`,
+    )
+  }
 
   return (
     <div className="page-grid">
-      <Panel title="Lançamento rápido">
+      <Panel title="O que aconteceu?">
+        <div className="movement-grid">
+          {movementOptions.map((option) => (
+            <button
+              key={option.type}
+              type="button"
+              className={movementType === option.type ? 'active-choice' : ''}
+              onClick={() => setMovementType(option.type)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title="Lançamento rápido com IA/parser">
         <div className="quick-layout">
           <label className="field">
             <span>Digite a movimentação</span>
-            <input value={entry} onChange={(event) => setEntry(event.target.value)} placeholder="80 fralda bebê pix 25/04" />
+            <input value={entry} onChange={(event) => setEntry(event.target.value)} placeholder="1033,33 bolsa estágio nubank hoje" />
           </label>
           <button
             className="primary-button"
@@ -828,7 +922,7 @@ function QuickEntry({
             disabled={!parsed}
             onClick={() => {
               if (parsed) {
-                addTransaction(parsed)
+                saveWithFeedback(parsed)
                 setEntry('')
               }
             }}
@@ -840,8 +934,17 @@ function QuickEntry({
         {parsed && <TransactionPreview transaction={parsed} state={state} />}
       </Panel>
 
-      <Panel title="Novo lançamento">
-        <ManualTransactionForm state={state} onSave={addTransaction} />
+      {feedback && (
+        <Panel title="Impacto no Plano Familiar">
+          <div className="decision-card">
+            <strong>Salvo localmente</strong>
+            <span>{feedback}</span>
+          </div>
+        </Panel>
+      )}
+
+      <Panel title="Formulário completo do movimento">
+        <ManualTransactionForm key={movementType} state={state} onSave={saveWithFeedback} defaultType={movementType} />
       </Panel>
 
       <Panel title="Importação de extrato com IA">
@@ -933,6 +1036,7 @@ function ManualTransactionForm({
 
   const save = () => {
     if (!form.amount || !form.description.trim()) return
+    const now = new Date().toISOString()
     onSave({
       id: makeId('tx'),
       transactionDate: form.transactionDate,
@@ -949,6 +1053,8 @@ function ManualTransactionForm({
       source: 'manual',
       notes: form.notes || undefined,
       syncStatus: 'salvo_localmente',
+      createdAt: now,
+      updatedAt: now,
     })
     setForm((current) => ({ ...current, amount: 0, description: '', notes: '' }))
   }
@@ -1352,84 +1458,94 @@ function AccountsPage({
     goalId: '',
     active: true,
   })
+  const reserved = state.accounts.filter((account) => account.isGoalAccount).reduce((sum, account) => sum + account.currentBalance, 0)
+  const total = state.accounts.filter((account) => account.type !== 'cartao_credito').reduce((sum, account) => sum + account.currentBalance, 0)
+  const free = total - reserved
   return (
-    <Panel title="Contas e caixinhas">
-      <div className="manual-form">
-        <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Nome da conta" />
-        <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as AppState['accounts'][number]['type'] })}>
-          <option value="corrente">Corrente</option>
-          <option value="poupanca">Poupança</option>
-          <option value="caixinha">Caixinha</option>
-          <option value="dinheiro">Dinheiro</option>
-          <option value="cartao_credito">Cartão de crédito</option>
-          <option value="investimento">Investimento</option>
-          <option value="outro">Outro</option>
-        </select>
-        <input type="number" value={draft.initialBalance} onChange={(event) => setDraft({ ...draft, initialBalance: Number(event.target.value) })} />
-        <input type="number" value={draft.currentBalance} onChange={(event) => setDraft({ ...draft, currentBalance: Number(event.target.value) })} />
-        <select value={draft.isGoalAccount ? 'sim' : 'nao'} onChange={(event) => setDraft({ ...draft, isGoalAccount: event.target.value === 'sim' })}>
-          <option value="nao">Conta comum</option>
-          <option value="sim">Vinculada a meta</option>
-        </select>
-        <select value={draft.goalId} onChange={(event) => setDraft({ ...draft, goalId: event.target.value })}>
-          <option value="">Sem meta</option>
-          {state.projects.map((project) => (
-            <option key={project.id} value={project.id}>{project.name}</option>
+    <div className="page-grid">
+      <section className="kpi-grid">
+        <Kpi title="Saldo total" value={money(total)} icon={Landmark} tone="neutral" />
+        <Kpi title="Saldo livre real" value={money(free)} icon={Wallet} tone="good" />
+        <Kpi title="Saldo reservado" value={money(reserved)} icon={PiggyBank} tone="warn" />
+      </section>
+      <Panel title="Contas e caixinhas">
+        <div className="manual-form">
+          <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Nome da conta" />
+          <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as AppState['accounts'][number]['type'] })}>
+            <option value="corrente">Corrente</option>
+            <option value="poupanca">Poupança</option>
+            <option value="caixinha">Caixinha</option>
+            <option value="dinheiro">Dinheiro</option>
+            <option value="cartao_credito">Cartão de crédito</option>
+            <option value="investimento">Investimento</option>
+            <option value="outro">Outro</option>
+          </select>
+          <input type="number" value={draft.initialBalance} onChange={(event) => setDraft({ ...draft, initialBalance: Number(event.target.value) })} />
+          <input type="number" value={draft.currentBalance} onChange={(event) => setDraft({ ...draft, currentBalance: Number(event.target.value) })} />
+          <select value={draft.isGoalAccount ? 'sim' : 'nao'} onChange={(event) => setDraft({ ...draft, isGoalAccount: event.target.value === 'sim' })}>
+            <option value="nao">Conta comum</option>
+            <option value="sim">Vinculada a meta</option>
+          </select>
+          <select value={draft.goalId} onChange={(event) => setDraft({ ...draft, goalId: event.target.value })}>
+            <option value="">Sem meta</option>
+            {state.projects.map((project) => (
+              <option key={project.id} value={project.id}>{project.name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={!draft.name.trim()}
+            onClick={() => {
+              updateState((current) => ({
+                ...current,
+                accounts: [
+                  ...current.accounts,
+                  {
+                    id: makeId('acc'),
+                    ...draft,
+                    name: draft.name.trim(),
+                    goalId: draft.goalId || undefined,
+                  },
+                ],
+              }))
+              setDraft((current) => ({ ...current, name: '', initialBalance: 0, currentBalance: 0 }))
+            }}
+          >
+            <Plus size={18} />
+            Adicionar
+          </button>
+        </div>
+        <div className="account-grid">
+          {state.accounts.map((account) => (
+            <article className="account-card" key={account.id}>
+              <input
+                value={account.name}
+                onChange={(event) =>
+                  updateState((current) => ({
+                    ...current,
+                    accounts: current.accounts.map((item) => (item.id === account.id ? { ...item, name: event.target.value } : item)),
+                  }))
+                }
+              />
+              <span>{account.type}</span>
+              <b>{money(account.currentBalance)}</b>
+              <small>{account.isGoalAccount ? `Meta: ${nameById(state.projects, account.goalId)}` : 'Saldo livre'}</small>
+              <button
+                type="button"
+                onClick={() =>
+                  updateState((current) => ({
+                    ...current,
+                    accounts: current.accounts.map((item) => (item.id === account.id ? { ...item, active: !item.active } : item)),
+                  }))
+                }
+              >
+                {account.active ? 'Ativa' : 'Inativa'}
+              </button>
+            </article>
           ))}
-        </select>
-        <button
-          type="button"
-          disabled={!draft.name.trim()}
-          onClick={() => {
-            updateState((current) => ({
-              ...current,
-              accounts: [
-                ...current.accounts,
-                {
-                  id: makeId('acc'),
-                  ...draft,
-                  name: draft.name.trim(),
-                  goalId: draft.goalId || undefined,
-                },
-              ],
-            }))
-            setDraft((current) => ({ ...current, name: '', initialBalance: 0, currentBalance: 0 }))
-          }}
-        >
-          <Plus size={18} />
-          Adicionar
-        </button>
-      </div>
-      <div className="account-grid">
-        {state.accounts.map((account) => (
-          <article className="account-card" key={account.id}>
-            <input
-              value={account.name}
-              onChange={(event) =>
-                updateState((current) => ({
-                  ...current,
-                  accounts: current.accounts.map((item) => (item.id === account.id ? { ...item, name: event.target.value } : item)),
-                }))
-              }
-            />
-            <span>{account.type}</span>
-            <b>{money(account.currentBalance)}</b>
-            <small>{account.isGoalAccount ? `Meta: ${nameById(state.projects, account.goalId)}` : 'Saldo livre'}</small>
-            <button
-              type="button"
-              onClick={() =>
-                updateState((current) => ({
-                  ...current,
-                  accounts: current.accounts.map((item) => (item.id === account.id ? { ...item, active: !item.active } : item)),
-                }))
-              }
-            >
-              {account.active ? 'Ativa' : 'Inativa'}
-            </button>
-          </article>
-        ))}
-      </div>
-    </Panel>
+        </div>
+      </Panel>
+    </div>
   )
 }
 
@@ -1477,6 +1593,53 @@ function GoalsPage({
     </div>
   )
 }
+
+function ProjectsHub({
+  state,
+  updateState,
+  snapshot,
+  addTransaction,
+}: {
+  state: AppState
+  updateState: (updater: (current: AppState) => AppState) => void
+  snapshot: PlanningSnapshot
+  addTransaction: (transaction: Transaction) => void
+}) {
+  const [activeType, setActiveType] = useState<Project['type']>('reserva_emergencia')
+  const projectCards = [
+    { type: 'reserva_emergencia' as Project['type'], label: 'Reserva de emergência', gap: snapshot.reserveGap },
+    { type: 'bebe' as Project['type'], label: 'Bebê / enxoval', gap: snapshot.babyGap },
+    { type: 'casa' as Project['type'], label: 'Casa / morar junto', gap: snapshot.houseGap },
+    { type: 'carro' as Project['type'], label: 'Carro', gap: snapshot.monthlyCarGoal },
+    { type: 'investimento' as Project['type'], label: 'Investimentos', gap: snapshot.incomeGap > 0 ? snapshot.incomeGap : 0 },
+  ]
+
+  return (
+    <div className="page-grid">
+      <Panel title="Projetos de vida">
+        <div className="project-tabs">
+          {projectCards.map((card) => {
+            const project = state.projects.find((item) => item.type === card.type)
+            const missing = project ? Math.max(project.targetAmount - project.reservedAmount - project.spentAmount, 0) : 0
+            return (
+              <button key={card.type} type="button" className={activeType === card.type ? 'active-choice' : ''} onClick={() => setActiveType(card.type)}>
+                <strong>{card.label}</strong>
+                <span>Falta {money(missing)} | gap mensal {money(card.gap)}</span>
+              </button>
+            )
+          })}
+        </div>
+      </Panel>
+      {activeType === 'investimento' ? (
+        <InvestmentsPage snapshot={snapshot} />
+      ) : (
+        <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type={activeType} addTransaction={addTransaction} />
+      )}
+    </div>
+  )
+}
+
+void GoalsPage
 
 function ProjectFocus({
   state,
@@ -1639,14 +1802,14 @@ function ProjectEditor({
           <option value="nao">Não</option>
         </select>
       </label>
-      {(type === 'casa' || type === 'carro') && (
+      {(type === 'casa' || type === 'carro' || type === 'bebe') && (
         <>
           <label className="field">
             <span>Custo inicial</span>
             <input type="number" value={project.initialCost || 0} onChange={(event) => updateProject({ initialCost: Number(event.target.value) })} />
           </label>
           <label className="field">
-            <span>Custo mensal futuro</span>
+            <span>{type === 'bebe' ? 'Gasto mensal futuro do bebê' : 'Custo mensal futuro'}</span>
             <input type="number" value={project.futureMonthlyCost || 0} onChange={(event) => updateProject({ futureMonthlyCost: Number(event.target.value) })} />
           </label>
         </>
@@ -2059,6 +2222,9 @@ function HistoryPage({ state, selectedMonth }: { state: AppState; selectedMonth:
       <Panel title="Gastos por categoria">
         <TransactionCategoryChart rows={categoryRows} />
       </Panel>
+      <Panel title="Todos os movimentos do período">
+        <TransactionTable transactions={state.transactions.filter((transaction) => transaction.competenceMonth === selectedMonth)} state={state} />
+      </Panel>
     </div>
   )
 }
@@ -2138,7 +2304,7 @@ function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapsh
   const fallbackAnswer = () => {
     const facts = [
       `Dados analisados: renda atual ${money(snapshot.currentIncome)}, custo essencial ${money(snapshot.essentialCost)} e metas obrigatórias ${money(snapshot.mandatoryMonthlyGoals)}.`,
-      `Cálculos principais: renda necessária ${money(snapshot.necessaryIncome)} e gap ${money(snapshot.incomeGap)}.`,
+      `Cálculos principais: renda necessária para viver o plano ${money(snapshot.necessaryIncome)} e Gap do Plano Familiar ${money(snapshot.incomeGap)}.`,
       `Interpretação: ${snapshot.incomeGap > 0 ? 'o plano familiar depende de renda adicional ou ajuste de prazo.' : 'o plano está sustentável no mês atual.'}`,
       `Riscos: cartão em ${percent(snapshot.cardIncomeRate)} da renda e reserva necessária de ${money(snapshot.emergencyNeeded)}.`,
       `Opções possíveis: aumentar renda, reduzir custos variáveis, adiar carro ou redistribuir pesos entre bebê e casa.`,
@@ -2151,6 +2317,7 @@ function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapsh
   const ask = async () => {
     setLoading(true)
     try {
+      const userQuestion = question.trim() || 'Quanto preciso ganhar para morar junto com minha namorada e cuidar do bebê?'
       const months = state.financialMonths.slice(-3).map((month) => month.month)
       const recentTransactions = state.transactions.filter((transaction) => months.includes(transaction.competenceMonth))
       const expensesByCategory = state.categories.map((category) => ({
@@ -2159,7 +2326,7 @@ function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapsh
           .filter((transaction) => transaction.categoryId === category.id && transaction.type !== 'ganho')
           .reduce((sum, transaction) => sum + transaction.amount, 0),
       }))
-      const prompt = `${question}
+      const prompt = `${userQuestion}
 
 Responda sempre no formato:
 1. Fatos
@@ -2341,46 +2508,130 @@ function Onboarding({
   updateState: (updater: (current: AppState) => AppState) => void
   setRoute: (route: RouteKey) => void
 }) {
+  const userIncome = state.incomeSources.find((income) => income.person === 'Usuário' || income.name === 'Renda atual do usuário')
+  const partnerIncome = state.incomeSources.find((income) => income.person === 'Parceira' || income.name === 'Renda atual da parceira')
+  const reserve = state.projects.find((project) => project.type === 'reserva_emergencia')
+  const baby = state.projects.find((project) => project.type === 'bebe')
+  const home = state.projects.find((project) => project.type === 'casa')
+  const car = state.projects.find((project) => project.type === 'carro')
+  const upsertIncome = (name: string, person: string, value: number) => {
+    updateState((current) => {
+      const existing = current.incomeSources.find((income) => income.name === name)
+      if (existing) {
+        return {
+          ...current,
+          incomeSources: current.incomeSources.map((income) =>
+            income.id === existing.id ? { ...income, expectedAmount: value, receivedAmount: value, status: value > 0 ? 'recebida' : 'prevista' } : income,
+          ),
+        }
+      }
+      return {
+        ...current,
+        incomeSources: [
+          ...current.incomeSources,
+          {
+            id: makeId('income'),
+            name,
+            person,
+            kind: 'fixa',
+            expectedAmount: value,
+            receivedAmount: value,
+            recurrence: 'mensal',
+            status: value > 0 ? 'recebida' : 'prevista',
+          },
+        ],
+      }
+    })
+  }
+
   return (
-    <Panel title="Diagnóstico inicial">
-      <div className="settings-grid">
-        <label className="field">
-          <span>Nome do usuário</span>
-          <input
-            value={state.profile.name}
-            onChange={(event) => updateState((current) => ({ ...current, profile: { ...current.profile, name: event.target.value } }))}
-          />
-        </label>
-        <label className="field">
-          <span>Nome da namorada/esposa</span>
-          <input
-            value={state.profile.partnerName}
-            onChange={(event) => updateState((current) => ({ ...current, profile: { ...current.profile, partnerName: event.target.value } }))}
-          />
-        </label>
-        <label className="field">
-          <span>Data prevista do bebê</span>
-          <input
-            type="date"
-            value={state.profile.babyExpectedDate || ''}
-            onChange={(event) =>
-              updateState((current) => ({ ...current, profile: { ...current.profile, babyExpectedDate: event.target.value } }))
-            }
-          />
-        </label>
-      </div>
-      <button
-        className="primary-button"
-        type="button"
-        onClick={() => {
-          updateState((current) => ({ ...current, onboardingComplete: true }))
-          setRoute('dashboard')
-        }}
-      >
-        <CheckCircle2 size={18} />
-        Gerar resultado inicial
-      </button>
-    </Panel>
+    <div className="page-grid">
+      <Panel title="Plano Familiar - diagnóstico inicial">
+        <div className="settings-grid">
+          <label className="field">
+            <span>Nome do usuário</span>
+            <input
+              value={state.profile.name}
+              onChange={(event) => updateState((current) => ({ ...current, profile: { ...current.profile, name: event.target.value } }))}
+            />
+          </label>
+          <label className="field">
+            <span>Nome da namorada/parceira</span>
+            <input
+              value={state.profile.partnerName}
+              onChange={(event) => updateState((current) => ({ ...current, profile: { ...current.profile, partnerName: event.target.value } }))}
+            />
+          </label>
+          <label className="field">
+            <span>Data prevista do bebê</span>
+            <input
+              type="date"
+              value={state.profile.babyExpectedDate || ''}
+              onChange={(event) =>
+                updateState((current) => ({ ...current, profile: { ...current.profile, babyExpectedDate: event.target.value } }))
+              }
+            />
+          </label>
+          <label className="field">
+            <span>Renda atual do usuário</span>
+            <input type="number" value={userIncome?.receivedAmount || 0} onChange={(event) => upsertIncome('Renda atual do usuário', 'Usuário', Number(event.target.value))} />
+          </label>
+          <label className="field">
+            <span>Renda atual da parceira</span>
+            <input type="number" value={partnerIncome?.receivedAmount || 0} onChange={(event) => upsertIncome('Renda atual da parceira', 'Parceira', Number(event.target.value))} />
+          </label>
+          <label className="field">
+            <span>Meses de reserva desejados</span>
+            <select
+              value={state.settings.emergencyMonths}
+              onChange={(event) => updateState((current) => ({ ...current, settings: { ...current.settings, emergencyMonths: Number(event.target.value) } }))}
+            >
+              <option value={3}>3 meses</option>
+              <option value={6}>6 meses</option>
+              <option value={12}>12 meses</option>
+            </select>
+          </label>
+        </div>
+      </Panel>
+
+      {reserve && (
+        <Panel title="Reserva de emergência">
+          <ProjectEditor state={state} project={reserve} updateState={updateState} type="reserva_emergencia" />
+        </Panel>
+      )}
+      {baby && (
+        <Panel title="Bebê">
+          <ProjectEditor state={state} project={baby} updateState={updateState} type="bebe" />
+        </Panel>
+      )}
+      {home && (
+        <Panel title="Casa / morar junto">
+          <ProjectEditor state={state} project={home} updateState={updateState} type="casa" />
+        </Panel>
+      )}
+      {car && (
+        <Panel title="Carro">
+          <ProjectEditor state={state} project={car} updateState={updateState} type="carro" />
+        </Panel>
+      )}
+
+      <Panel title="Resumo do plano">
+        <div className="button-row">
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => {
+              updateState((current) => ({ ...current, onboardingComplete: true }))
+              setRoute('dashboard')
+            }}
+          >
+            <CheckCircle2 size={18} />
+            Salvar Plano Familiar
+          </button>
+          <button type="button" onClick={() => setRoute('lancamento')}>Lançar primeiro movimento</button>
+        </div>
+      </Panel>
+    </div>
   )
 }
 

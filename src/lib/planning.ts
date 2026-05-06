@@ -108,16 +108,6 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
     reserveProject?.futureEssentialCost || 0,
   )
 
-  const emergencyMinimum = essentialBase * 3
-  const emergencyComfortable = essentialBase * 6
-  const emergencyIdeal = essentialBase * 12
-  const emergencyNeeded = essentialBase * state.settings.emergencyMonths
-  const monthlyReserveGoal = reserveProject
-    ? Math.max(emergencyNeeded - reserveProject.reservedAmount, 0) / monthsUntil(reserveProject.deadline)
-    : 0
-  const monthlyBabyGoal = monthlyGoal(babyProject)
-  const monthlyHomeGoal = monthlyGoal(homeProject)
-  const monthlyCarGoal = carProject?.isMandatory ? monthlyGoal(carProject) : 0
   const carMonthlyCost =
     carProject && (carProject.isMandatory || carProject.status === 'active')
       ? (carProject.carInstallment || 0) +
@@ -127,9 +117,8 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
         (carProject.carUberIncome || 0)
       : 0
   const homeFutureCost = homeProject && (homeProject.deadline || homeProject.status === 'active') ? homeProject.futureMonthlyCost || 0 : 0
+  const babyFutureCost = babyProject && (babyProject.deadline || babyProject.status === 'active') ? babyProject.futureMonthlyCost || 0 : 0
 
-  const mandatoryMonthlyGoals = monthlyReserveGoal + monthlyBabyGoal + monthlyHomeGoal + monthlyCarGoal
-  const safetyMargin = essentialBase * state.settings.safetyMarginRate
   const cardImpact = state.cardPurchases
     .filter((purchase) => purchase.purchaseDate.slice(0, 7) <= selectedMonth)
     .reduce((sum, purchase) => sum + purchase.amount / Math.max(purchase.installments, 1), 0)
@@ -137,10 +126,24 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
   const scenarioFutureCost = state.scenarios
     .filter((scenario) => scenario.type === 'alugar_casa' || scenario.type === 'morar_junto')
     .reduce((sum, scenario) => sum + scenario.monthlyExpense, 0)
-  const futureCost = homeFutureCost + Math.max(carMonthlyCost, 0) + scenarioFutureCost
+  const futureCost = homeFutureCost + babyFutureCost + Math.max(carMonthlyCost, 0) + scenarioFutureCost
+  const emergencyBaseCost = Math.max(essentialBase, futureCost)
+
+  const emergencyMinimum = emergencyBaseCost * 3
+  const emergencyComfortable = emergencyBaseCost * 6
+  const emergencyIdeal = emergencyBaseCost * 12
+  const emergencyNeeded = emergencyBaseCost * state.settings.emergencyMonths
+  const monthlyReserveGoal = reserveProject
+    ? Math.max(emergencyNeeded - reserveProject.reservedAmount, 0) / monthsUntil(reserveProject.deadline)
+    : 0
+  const monthlyBabyGoal = monthlyGoal(babyProject)
+  const monthlyHomeGoal = monthlyGoal(homeProject)
+  const monthlyCarGoal = carProject?.isMandatory ? monthlyGoal(carProject) : 0
+  const mandatoryMonthlyGoals = monthlyReserveGoal + monthlyBabyGoal + monthlyHomeGoal + monthlyCarGoal
+  const safetyMargin = emergencyBaseCost * state.settings.safetyMarginRate
 
   const necessaryIncome = essentialBase + futureCost + mandatoryMonthlyGoals + cardImpact + safetyMargin
-  const incomeGap = necessaryIncome - currentIncome
+  const incomeGap = Math.max(necessaryIncome - currentIncome, 0)
 
   const reservedBalance = state.accounts
     .filter((account) => goalAccountIds.has(account.id))
@@ -150,6 +153,15 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
     .reduce((sum, account) => sum + account.currentBalance, 0)
 
   const realSurplus = currentIncome - essentialBase - futureCost - mandatoryMonthlyGoals - cardImpact - safetyMargin
+  const allocatedToProject = (project?: Project) =>
+    project
+      ? monthTransactions
+          .filter((transaction) => transaction.projectId === project.id && (transaction.type === 'reserva_objetivo' || transaction.type === 'transferencia'))
+          .reduce((sum, transaction) => sum + transaction.amount, 0)
+      : 0
+  const reserveGap = Math.max(monthlyReserveGoal - allocatedToProject(reserveProject), 0)
+  const babyGap = Math.max(monthlyBabyGoal - allocatedToProject(babyProject), 0)
+  const houseGap = Math.max(monthlyHomeGoal - allocatedToProject(homeProject), 0)
 
   const reviewsForMonth = state.dayReviews.filter((review) => review.competenceMonth === selectedMonth)
   const missingReviewDays = reviewsForMonth
@@ -183,9 +195,13 @@ export function calculatePlanning(state: AppState, selectedMonth = monthKey()): 
     expectedIncome,
     necessaryIncome,
     incomeGap,
+    reserveGap,
+    babyGap,
+    houseGap,
     totalExpenses,
     essentialCost: essentialBase,
     futureCost,
+    safetyMargin,
     mandatoryMonthlyGoals,
     monthlyReserveGoal,
     monthlyBabyGoal,

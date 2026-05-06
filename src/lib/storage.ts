@@ -254,7 +254,10 @@ const fromTransaction = (row: DbRow): Transaction => ({
   aiConfidence: row.ai_confidence == null ? undefined : asNumber(row.ai_confidence),
   rawText: row.raw_text ? asString(row.raw_text) : undefined,
   notes: row.notes ? asString(row.notes) : undefined,
-  syncStatus: 'sincronizado',
+  syncStatus: row.sync_status ? (asString(row.sync_status) as Transaction['syncStatus']) : 'sincronizado',
+  createdAt: row.created_at ? asString(row.created_at) : undefined,
+  updatedAt: row.updated_at ? asString(row.updated_at) : undefined,
+  deletedAt: row.deleted_at ? asString(row.deleted_at) : undefined,
 })
 
 const fromFinancialMonth = (row: DbRow): FinancialMonth => ({
@@ -440,6 +443,10 @@ const toTransactionRow = (userId: string, item: Transaction) => ({
   ai_confidence: nullable(item.aiConfidence),
   raw_text: nullable(item.rawText),
   notes: nullable(item.notes),
+  sync_status: item.syncStatus || 'salvo_localmente',
+  created_at: item.createdAt || new Date().toISOString(),
+  updated_at: item.updatedAt || new Date().toISOString(),
+  deleted_at: nullable(item.deletedAt),
 })
 
 const toFinancialMonthRow = (userId: string, item: FinancialMonth) => ({

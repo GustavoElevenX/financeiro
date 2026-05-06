@@ -82,6 +82,9 @@ export interface Transaction {
   rawText?: string
   notes?: string
   syncStatus: SyncStatus
+  createdAt?: string
+  updatedAt?: string
+  deletedAt?: string
 }
 
 export interface IncomeSource {
@@ -261,9 +264,13 @@ export interface PlanningSnapshot {
   expectedIncome: number
   necessaryIncome: number
   incomeGap: number
+  reserveGap: number
+  babyGap: number
+  houseGap: number
   totalExpenses: number
   essentialCost: number
   futureCost: number
+  safetyMargin: number
   mandatoryMonthlyGoals: number
   monthlyReserveGoal: number
   monthlyBabyGoal: number

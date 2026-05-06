@@ -124,6 +124,61 @@ td {
   min-height: 100vh;
 }
 
+.login-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.login-hero {
+  display: grid;
+  align-content: center;
+  gap: 18px;
+  padding: clamp(32px, 7vw, 88px);
+  background:
+    linear-gradient(rgba(15, 23, 42, 0.76), rgba(15, 23, 42, 0.72)),
+    url("https://images.unsplash.com/photo-1554224154-26032ffc0d07?auto=format&fit=crop&w=1600&q=80");
+  background-size: cover;
+  background-position: center;
+  color: white;
+}
+
+.login-hero h1 {
+  max-width: 760px;
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 4.8rem);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.login-hero p {
+  max-width: 680px;
+  color: #e2e8f0;
+  font-size: 1.05rem;
+}
+
+.login-proof {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.login-proof span {
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 8px 12px;
+  font-weight: 800;
+}
+
+.login-card {
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  padding: clamp(24px, 4vw, 52px);
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -620,6 +675,33 @@ td {
   margin: 12px 0;
 }
 
+.movement-grid,
+.project-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.movement-grid button,
+.project-tabs button {
+  display: grid;
+  justify-items: start;
+  min-height: 74px;
+  text-align: left;
+}
+
+.project-tabs button span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.active-choice {
+  border-color: #93c5fd;
+  background: var(--blue-soft);
+  color: #1d4ed8;
+  font-weight: 800;
+}
+
 .form-inline input {
   max-width: 260px;
 }
@@ -926,7 +1008,10 @@ td {
   .slider-grid,
   .account-grid,
   .manual-form,
-  .project-editor {
+  .project-editor,
+  .login-screen,
+  .movement-grid,
+  .project-tabs {
     grid-template-columns: 1fr;
   }
 
