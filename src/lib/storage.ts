@@ -12,6 +12,7 @@ import type {
   CreditCard,
   DayReview,
   FamilyMember,
+  FinancialMonth,
   IncomeSource,
   PlannedItem,
   Project,
@@ -84,6 +85,7 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
     accounts,
     categories,
     transactions,
+    financialMonths,
     incomeSources,
     projects,
     plannedItems,
@@ -100,6 +102,7 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
     client.from('accounts').select('*').eq('user_id', userId).order('created_at'),
     client.from('categories').select('*').eq('user_id', userId).order('created_at'),
     client.from('transactions').select('*').eq('user_id', userId).order('transaction_date', { ascending: false }),
+    client.from('financial_months').select('*').eq('user_id', userId).order('month'),
     client.from('income_sources').select('*').eq('user_id', userId).order('created_at'),
     client.from('projects').select('*').eq('user_id', userId).order('priority'),
     client.from('planned_items').select('*').eq('user_id', userId).order('created_at'),
@@ -120,6 +123,7 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
     accounts.error,
     categories.error,
     transactions.error,
+    financialMonths.error,
     incomeSources.error,
     projects.error,
     plannedItems.error,
@@ -145,6 +149,7 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
     accounts: (accounts.data || []).map(fromAccount),
     categories: (categories.data || []).map(fromCategory),
     transactions: (transactions.data || []).map(fromTransaction),
+    financialMonths: (financialMonths.data || []).map(fromFinancialMonth),
     incomeSources: (incomeSources.data || []).map(fromIncomeSource),
     projects: (projects.data || []).map(fromProject),
     plannedItems: (plannedItems.data || []).map(fromPlannedItem),
@@ -176,45 +181,25 @@ export async function saveRemoteState(userId: string, state: AppState) {
   const { error: settingsError } = await client.from('app_settings').upsert(toSettingsRow(userId, state.settings))
   if (settingsError) throw settingsError
 
-  const deleteOrder = [
-    'transactions',
-    'card_purchases',
-    'planned_items',
-    'credit_cards',
-    'classification_rules',
-    'day_reviews',
-    'accounts',
-    'projects',
-    'categories',
-    'family_members',
-    'income_sources',
-    'ai_insights',
-    'scenarios',
-  ]
-
-  for (const table of deleteOrder) {
-    const { error } = await client.from(table).delete().eq('user_id', userId)
-    if (error) throw error
-  }
-
-  await insertRows('categories', state.categories.map((item) => toCategoryRow(userId, item)))
-  await insertRows('projects', state.projects.map((item) => toProjectRow(userId, item)))
-  await insertRows('accounts', state.accounts.map((item) => toAccountRow(userId, item)))
-  await insertRows('family_members', state.familyMembers.map((item) => toFamilyMemberRow(userId, item)))
-  await insertRows('income_sources', state.incomeSources.map((item) => toIncomeSourceRow(userId, item)))
-  await insertRows('classification_rules', state.classificationRules.map((item) => toClassificationRuleRow(userId, item)))
-  await insertRows('day_reviews', state.dayReviews.map((item) => toDayReviewRow(userId, item)))
-  await insertRows('credit_cards', state.creditCards.map((item) => toCreditCardRow(userId, item)))
-  await insertRows('transactions', state.transactions.map((item) => toTransactionRow(userId, item)))
-  await insertRows('planned_items', state.plannedItems.map((item) => toPlannedItemRow(userId, item)))
-  await insertRows('card_purchases', state.cardPurchases.map((item) => toCardPurchaseRow(userId, item)))
-  await insertRows('ai_insights', state.aiInsights.map((item) => toAiInsightRow(userId, item)))
-  await insertRows('scenarios', state.scenarios.map((item) => toScenarioRow(userId, item)))
+  await upsertRows('categories', state.categories.map((item) => toCategoryRow(userId, item)))
+  await upsertRows('projects', state.projects.map((item) => toProjectRow(userId, item)))
+  await upsertRows('accounts', state.accounts.map((item) => toAccountRow(userId, item)))
+  await upsertRows('family_members', state.familyMembers.map((item) => toFamilyMemberRow(userId, item)))
+  await upsertRows('income_sources', state.incomeSources.map((item) => toIncomeSourceRow(userId, item)))
+  await upsertRows('classification_rules', state.classificationRules.map((item) => toClassificationRuleRow(userId, item)))
+  await upsertRows('day_reviews', state.dayReviews.map((item) => toDayReviewRow(userId, item)))
+  await upsertRows('financial_months', state.financialMonths.map((item) => toFinancialMonthRow(userId, item)))
+  await upsertRows('credit_cards', state.creditCards.map((item) => toCreditCardRow(userId, item)))
+  await upsertRows('transactions', state.transactions.map((item) => toTransactionRow(userId, item)))
+  await upsertRows('planned_items', state.plannedItems.map((item) => toPlannedItemRow(userId, item)))
+  await upsertRows('card_purchases', state.cardPurchases.map((item) => toCardPurchaseRow(userId, item)))
+  await upsertRows('ai_insights', state.aiInsights.map((item) => toAiInsightRow(userId, item)))
+  await upsertRows('scenarios', state.scenarios.map((item) => toScenarioRow(userId, item)))
 }
 
-async function insertRows(table: string, rows: unknown[]) {
+async function upsertRows(table: string, rows: unknown[]) {
   if (!rows.length) return
-  const { error } = await requireSupabase().from(table).insert(rows)
+  const { error } = await requireSupabase().from(table).upsert(rows)
   if (error) throw error
 }
 
@@ -268,7 +253,22 @@ const fromTransaction = (row: DbRow): Transaction => ({
   source: asString(row.source) as Transaction['source'],
   aiConfidence: row.ai_confidence == null ? undefined : asNumber(row.ai_confidence),
   rawText: row.raw_text ? asString(row.raw_text) : undefined,
+  notes: row.notes ? asString(row.notes) : undefined,
   syncStatus: 'sincronizado',
+})
+
+const fromFinancialMonth = (row: DbRow): FinancialMonth => ({
+  id: asString(row.id),
+  month: asString(row.month),
+  status: asString(row.status) as FinancialMonth['status'],
+  totalIncome: asNumber(row.total_income),
+  totalExpense: asNumber(row.total_expense),
+  totalReserved: asNumber(row.total_reserved),
+  balance: asNumber(row.balance),
+  closedAt: row.closed_at ? asString(row.closed_at) : undefined,
+  reopenedAt: row.reopened_at ? asString(row.reopened_at) : undefined,
+  createdAt: asString(row.created_at),
+  updatedAt: asString(row.updated_at),
 })
 
 const fromIncomeSource = (row: DbRow): IncomeSource => ({
@@ -296,6 +296,17 @@ const fromProject = (row: DbRow): Project => ({
   status: asString(row.status) as Project['status'],
   isMandatory: Boolean(row.is_mandatory),
   weight: asNumber(row.weight),
+  linkedAccountId: row.linked_account_id ? asString(row.linked_account_id) : undefined,
+  initialCost: asNumber(row.initial_cost),
+  futureMonthlyCost: asNumber(row.future_monthly_cost),
+  currentEssentialCost: asNumber(row.current_essential_cost),
+  futureEssentialCost: asNumber(row.future_essential_cost),
+  carDownPayment: asNumber(row.car_down_payment),
+  carInstallment: asNumber(row.car_installment),
+  carFuel: asNumber(row.car_fuel),
+  carMaintenance: asNumber(row.car_maintenance),
+  carInsurance: asNumber(row.car_insurance),
+  carUberIncome: asNumber(row.car_uber_income),
 })
 
 const fromPlannedItem = (row: DbRow): PlannedItem => ({
@@ -311,6 +322,7 @@ const fromPlannedItem = (row: DbRow): PlannedItem => ({
   purchasedAt: row.purchased_at ? asString(row.purchased_at) : undefined,
   accountId: row.account_id ? asString(row.account_id) : undefined,
   notes: row.notes ? asString(row.notes) : undefined,
+  referenceUrl: row.reference_url ? asString(row.reference_url) : undefined,
 })
 
 const fromCreditCard = (row: DbRow): CreditCard => ({
@@ -427,6 +439,23 @@ const toTransactionRow = (userId: string, item: Transaction) => ({
   source: item.source,
   ai_confidence: nullable(item.aiConfidence),
   raw_text: nullable(item.rawText),
+  notes: nullable(item.notes),
+})
+
+const toFinancialMonthRow = (userId: string, item: FinancialMonth) => ({
+  id: item.id,
+  user_id: userId,
+  month: item.month,
+  year: Number(item.month.slice(0, 4)),
+  status: item.status,
+  total_income: item.totalIncome,
+  total_expense: item.totalExpense,
+  total_reserved: item.totalReserved,
+  balance: item.balance,
+  closed_at: nullable(item.closedAt),
+  reopened_at: nullable(item.reopenedAt),
+  created_at: item.createdAt,
+  updated_at: item.updatedAt,
 })
 
 const toIncomeSourceRow = (userId: string, item: IncomeSource) => ({
@@ -456,6 +485,17 @@ const toProjectRow = (userId: string, item: Project) => ({
   status: item.status,
   is_mandatory: item.isMandatory,
   weight: item.weight,
+  linked_account_id: nullable(item.linkedAccountId),
+  initial_cost: item.initialCost || 0,
+  future_monthly_cost: item.futureMonthlyCost || 0,
+  current_essential_cost: item.currentEssentialCost || 0,
+  future_essential_cost: item.futureEssentialCost || 0,
+  car_down_payment: item.carDownPayment || 0,
+  car_installment: item.carInstallment || 0,
+  car_fuel: item.carFuel || 0,
+  car_maintenance: item.carMaintenance || 0,
+  car_insurance: item.carInsurance || 0,
+  car_uber_income: item.carUberIncome || 0,
 })
 
 const toPlannedItemRow = (userId: string, item: PlannedItem) => ({
@@ -472,6 +512,7 @@ const toPlannedItemRow = (userId: string, item: PlannedItem) => ({
   purchased_at: nullable(item.purchasedAt),
   account_id: nullable(item.accountId),
   notes: nullable(item.notes),
+  reference_url: nullable(item.referenceUrl),
 })
 
 const toCreditCardRow = (userId: string, item: CreditCard) => ({

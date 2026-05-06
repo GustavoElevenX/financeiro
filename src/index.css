@@ -74,7 +74,8 @@ button:disabled {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -85,7 +86,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px var(--blue-soft);
 }
@@ -584,10 +586,17 @@ td {
 .preview-grid,
 .settings-grid,
 .slider-grid,
-.account-grid {
+.account-grid,
+.manual-form,
+.project-editor {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.manual-form .wide,
+.project-editor .wide {
+  grid-column: span 2;
 }
 
 .preview-grid {
@@ -614,13 +623,17 @@ td {
 
 .list-row {
   display: grid;
-  grid-template-columns: 1.4fr 0.8fr 0.8fr 1fr 1fr;
+  grid-template-columns: 1.4fr 0.8fr 0.8fr 1fr 1fr auto;
   align-items: center;
   gap: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfe;
   padding: 12px;
+}
+
+.action-row {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .list-row span {
@@ -673,11 +686,59 @@ td {
 .day-cell {
   display: grid;
   gap: 6px;
-  min-height: 112px;
+  min-height: 180px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfe;
   padding: 10px;
+}
+
+.day-transactions {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.empty-state {
+  display: grid;
+  gap: 12px;
+  border: 1px dashed #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 16px;
+}
+
+.empty-state p,
+.empty-copy {
+  color: var(--muted);
+  margin: 0;
+}
+
+.item-manager,
+.project-editor {
+  margin-top: 14px;
+}
+
+.prompt-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.auth-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.auth-card {
+  display: grid;
+  gap: 18px;
+  width: min(760px, 100%);
 }
 
 .day-cell.reviewed,
@@ -821,7 +882,9 @@ td {
   .preview-grid,
   .settings-grid,
   .slider-grid,
-  .account-grid {
+  .account-grid,
+  .manual-form,
+  .project-editor {
     grid-template-columns: 1fr;
   }
 

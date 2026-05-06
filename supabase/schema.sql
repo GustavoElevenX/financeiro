@@ -60,11 +60,33 @@ create table if not exists projects (
   weight numeric default 0,
   status text default 'active',
   is_mandatory boolean default false,
+  linked_account_id uuid null,
+  initial_cost numeric default 0,
+  future_monthly_cost numeric default 0,
+  current_essential_cost numeric default 0,
+  future_essential_cost numeric default 0,
+  car_down_payment numeric default 0,
+  car_installment numeric default 0,
+  car_fuel numeric default 0,
+  car_maintenance numeric default 0,
+  car_insurance numeric default 0,
+  car_uber_income numeric default 0,
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
 
 alter table projects add column if not exists weight numeric default 0;
+alter table projects add column if not exists linked_account_id uuid null;
+alter table projects add column if not exists initial_cost numeric default 0;
+alter table projects add column if not exists future_monthly_cost numeric default 0;
+alter table projects add column if not exists current_essential_cost numeric default 0;
+alter table projects add column if not exists future_essential_cost numeric default 0;
+alter table projects add column if not exists car_down_payment numeric default 0;
+alter table projects add column if not exists car_installment numeric default 0;
+alter table projects add column if not exists car_fuel numeric default 0;
+alter table projects add column if not exists car_maintenance numeric default 0;
+alter table projects add column if not exists car_insurance numeric default 0;
+alter table projects add column if not exists car_uber_income numeric default 0;
 
 create table if not exists income_sources (
   id uuid primary key default gen_random_uuid(),
@@ -118,9 +140,12 @@ create table if not exists transactions (
   source text default 'manual',
   ai_confidence numeric null,
   raw_text text null,
+  notes text null,
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
+
+alter table transactions add column if not exists notes text;
 
 create table if not exists financial_months (
   id uuid primary key default gen_random_uuid(),
@@ -133,9 +158,12 @@ create table if not exists financial_months (
   total_reserved numeric default 0,
   balance numeric default 0,
   closed_at timestamp with time zone null,
+  reopened_at timestamp with time zone null,
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
+
+alter table financial_months add column if not exists reopened_at timestamp with time zone null;
 
 create table if not exists day_reviews (
   id uuid primary key default gen_random_uuid(),
@@ -162,9 +190,12 @@ create table if not exists planned_items (
   purchased_at date null,
   account_id uuid references accounts(id) on delete set null,
   notes text null,
+  reference_url text null,
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
+
+alter table planned_items add column if not exists reference_url text;
 
 create table if not exists recurring_items (
   id uuid primary key default gen_random_uuid(),

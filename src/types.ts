@@ -80,6 +80,7 @@ export interface Transaction {
   source: 'manual' | 'quick' | 'statement' | 'ai'
   aiConfidence?: number
   rawText?: string
+  notes?: string
   syncStatus: SyncStatus
 }
 
@@ -108,6 +109,17 @@ export interface Project {
   status: 'active' | 'paused' | 'done'
   isMandatory: boolean
   weight: number
+  linkedAccountId?: string
+  initialCost?: number
+  futureMonthlyCost?: number
+  currentEssentialCost?: number
+  futureEssentialCost?: number
+  carDownPayment?: number
+  carInstallment?: number
+  carFuel?: number
+  carMaintenance?: number
+  carInsurance?: number
+  carUberIncome?: number
 }
 
 export interface PlannedItem {
@@ -130,6 +142,21 @@ export interface PlannedItem {
   purchasedAt?: string
   accountId?: string
   notes?: string
+  referenceUrl?: string
+}
+
+export interface FinancialMonth {
+  id: string
+  month: string
+  status: 'em_andamento' | 'incompleto' | 'fechado'
+  totalIncome: number
+  totalExpense: number
+  totalReserved: number
+  balance: number
+  closedAt?: string
+  reopenedAt?: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface CreditCard {
@@ -214,6 +241,7 @@ export interface AppState {
   accounts: Account[]
   categories: Category[]
   transactions: Transaction[]
+  financialMonths: FinancialMonth[]
   incomeSources: IncomeSource[]
   projects: Project[]
   plannedItems: PlannedItem[]

@@ -38,7 +38,16 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { createInitialUserState, emptyState, makeId, todayIso } from './data'
+import {
+  competenceFromDate,
+  createInitialUserState,
+  emptyState,
+  ensureBaseState,
+  ensureMonthReviews,
+  makeId,
+  recalculateFinancialMonths,
+  todayIso,
+} from './data'
 import {
   askDeepSeek,
   hasDeepSeekConfig,
@@ -87,6 +96,8 @@ type RouteKey =
   | 'investimentos'
   | 'regularizacao'
   | 'simulador'
+  | 'historico'
+  | 'planejamento'
   | 'ia'
   | 'configuracoes'
 
@@ -106,6 +117,8 @@ const navItems: Array<{ key: RouteKey; label: string; icon: typeof LayoutDashboa
   { key: 'investimentos', label: 'Investimentos', icon: LineChartIcon },
   { key: 'regularizacao', label: 'Regularização', icon: CalendarCheck },
   { key: 'simulador', label: 'Simulador', icon: SlidersHorizontal },
+  { key: 'historico', label: 'Histórico', icon: LineChartIcon },
+  { key: 'planejamento', label: 'Planejamento mensal', icon: CalendarCheck },
   { key: 'ia', label: 'IA financeira', icon: Bot },
   { key: 'configuracoes', label: 'Configurações', icon: Settings },
 ]
@@ -136,7 +149,7 @@ function App() {
     if (!supabase) {
       loadLocalState()
         .then((localState) => {
-          if (localState) setState(localState)
+          setState(ensureBaseState(localState ?? createInitialUserState()))
         })
         .finally(() => {
           setHydrated(true)
@@ -181,8 +194,8 @@ function App() {
 
     loadRemoteState(user)
       .then(async (remoteState) => {
-        const nextState = remoteState ?? createInitialUserState(user.email)
-        if (!remoteState) await saveRemoteState(user.id, nextState)
+        const nextState = ensureBaseState(remoteState ?? createInitialUserState(user.email))
+        if (!remoteState || JSON.stringify(remoteState) !== JSON.stringify(nextState)) await saveRemoteState(user.id, nextState)
         if (active) {
           setState(nextState)
           setHydrated(true)
@@ -206,10 +219,12 @@ function App() {
 
     if (supabase && user) {
       queueMicrotask(() => setSyncMessage('Salvando'))
-      saveRemoteState(user.id, state)
-        .then(() => setSyncMessage('Sincronizado'))
-        .catch((error: Error) => setSyncMessage(error.message))
-      return
+      const id = window.setTimeout(() => {
+        saveRemoteState(user.id, state)
+          .then(() => setSyncMessage('Sincronizado'))
+          .catch((error: Error) => setSyncMessage(error.message))
+      }, 700)
+      return () => window.clearTimeout(id)
     }
 
     if (!supabase) {
@@ -223,27 +238,41 @@ function App() {
     setState((current) => updater(current))
   }
 
+  useEffect(() => {
+    queueMicrotask(() => {
+      setState((current) => recalculateFinancialMonths(ensureMonthReviews(ensureBaseState(current), selectedMonth)))
+    })
+  }, [selectedMonth])
+
   const addTransaction = (transaction: Transaction) => {
-    updateState((current) => applyTransaction(current, transaction))
+    updateState((current) => {
+      const month = current.financialMonths.find((item) => item.month === transaction.competenceMonth)
+      if (month?.status === 'fechado') {
+        window.alert('Você está alterando um mês já fechado. Os relatórios serão recalculados.')
+      }
+      return applyTransaction(current, transaction)
+    })
   }
 
   const page = {
-    dashboard: <Dashboard state={state} snapshot={snapshot} selectedMonth={selectedMonth} setRoute={setRoute} />,
+    dashboard: <Dashboard state={state} snapshot={snapshot} selectedMonth={selectedMonth} setRoute={setRoute} addTransaction={addTransaction} />,
     onboarding: <Onboarding state={state} updateState={updateState} setRoute={setRoute} />,
     lancamento: <QuickEntry state={state} addTransaction={addTransaction} updateState={updateState} />,
-    transacoes: <Transactions state={state} selectedMonth={selectedMonth} />,
+    transacoes: <Transactions state={state} selectedMonth={selectedMonth} addTransaction={addTransaction} />,
     rendas: <IncomePage state={state} updateState={updateState} snapshot={snapshot} />,
     despesas: <ExpensesPage state={state} snapshot={snapshot} selectedMonth={selectedMonth} />,
-    cartoes: <CardsPage state={state} updateState={updateState} snapshot={snapshot} />,
+    cartoes: <CardsPage state={state} updateState={updateState} snapshot={snapshot} addTransaction={addTransaction} />,
     contas: <AccountsPage state={state} updateState={updateState} />,
     metas: <GoalsPage state={state} updateState={updateState} />,
-    reserva: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="reserva_emergencia" />,
-    bebe: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="bebe" />,
-    casa: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="casa" />,
-    carro: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="carro" />,
+    reserva: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="reserva_emergencia" addTransaction={addTransaction} />,
+    bebe: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="bebe" addTransaction={addTransaction} />,
+    casa: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="casa" addTransaction={addTransaction} />,
+    carro: <ProjectFocus state={state} updateState={updateState} snapshot={snapshot} type="carro" addTransaction={addTransaction} />,
     investimentos: <InvestmentsPage snapshot={snapshot} />,
-    regularizacao: <Regularization state={state} updateState={updateState} selectedMonth={selectedMonth} />,
+    regularizacao: <Regularization state={state} updateState={updateState} selectedMonth={selectedMonth} addTransaction={addTransaction} />,
     simulador: <Simulator updateState={updateState} snapshot={snapshot} />,
+    historico: <HistoryPage state={state} selectedMonth={selectedMonth} />,
+    planejamento: <MonthlyPlanning state={state} updateState={updateState} snapshot={snapshot} selectedMonth={selectedMonth} />,
     ia: <AiPage state={state} snapshot={snapshot} />,
     configuracoes: <SettingsPage state={state} updateState={updateState} />,
   }[route]
@@ -300,7 +329,7 @@ function App() {
           <Database size={18} />
           <div>
             <strong>{supabase ? syncMessage : 'Modo local-first'}</strong>
-            <small>{hasDeepSeekConfig ? 'DeepSeek configurado' : 'DeepSeek ausente'}</small>
+            <small>{hasDeepSeekConfig ? 'IA avançada ativa' : 'Cálculos financeiros ativos'}</small>
           </div>
         </div>
       </aside>
@@ -362,12 +391,12 @@ function applyTransaction(state: AppState, transaction: Transaction): AppState {
     return project
   })
 
-  return {
+  return recalculateFinancialMonths(ensureMonthReviews({
     ...state,
     accounts,
     projects,
     transactions: [transaction, ...state.transactions],
-  }
+  }, transaction.competenceMonth))
 }
 
 function Dashboard({
@@ -375,11 +404,13 @@ function Dashboard({
   snapshot,
   selectedMonth,
   setRoute,
+  addTransaction,
 }: {
   state: AppState
   snapshot: PlanningSnapshot
   selectedMonth: string
   setRoute: (route: RouteKey) => void
+  addTransaction: (transaction: Transaction) => void
 }) {
   const projectProgress = state.projects.map((project) => ({
     name: project.name,
@@ -422,10 +453,17 @@ function Dashboard({
         </div>
       </section>
 
+      <Panel title="Novo lançamento">
+        <ManualTransactionForm state={state} onSave={addTransaction} />
+      </Panel>
+
       <section className="kpi-grid">
         <Kpi title="Renda atual" value={money(snapshot.currentIncome)} icon={CircleDollarSign} tone="good" />
+        <Kpi title="Renda prevista" value={money(snapshot.expectedIncome)} icon={CircleDollarSign} tone="neutral" />
         <Kpi title="Renda necessária" value={money(snapshot.necessaryIncome)} icon={Wallet} tone="neutral" />
         <Kpi title="Gap de renda" value={money(snapshot.incomeGap)} icon={AlertTriangle} tone={snapshot.incomeGap > 0 ? 'danger' : 'good'} />
+        <Kpi title="Gastos confirmados" value={money(snapshot.totalExpenses)} icon={ReceiptText} tone="danger" />
+        <Kpi title="Status do mês" value={snapshot.monthStatus} icon={CalendarCheck} tone={snapshot.monthStatus === 'fechado' ? 'good' : 'warn'} />
         <Kpi title="Saldo livre real" value={money(snapshot.freeBalance)} icon={Landmark} tone="neutral" />
         <Kpi title="Saldo reservado" value={money(snapshot.reservedBalance)} icon={PiggyBank} tone="good" />
         <Kpi title="Reserva necessária" value={money(snapshot.emergencyNeeded)} icon={Shield} tone="warn" />
@@ -507,6 +545,10 @@ function Dashboard({
             <li>Cartão saudável: {snapshot.cardIncomeRate <= 0.25 ? 'sim' : 'em atenção'}</li>
             <li>Mês pendente: {snapshot.missingReviewDays.length ? `${snapshot.missingReviewDays.length} dias` : 'nenhum'}</li>
           </ul>
+        </Panel>
+
+        <Panel title="Pendências para melhorar sua análise">
+          <SetupChecklist state={state} snapshot={snapshot} setRoute={setRoute} />
         </Panel>
 
         <Panel title="IA analista">
@@ -607,6 +649,66 @@ function AiSummary({ state, snapshot }: { state: AppState; snapshot: PlanningSna
   )
 }
 
+function SetupChecklist({
+  state,
+  snapshot,
+  setRoute,
+}: {
+  state: AppState
+  snapshot: PlanningSnapshot
+  setRoute: (route: RouteKey) => void
+}) {
+  const home = state.projects.find((project) => project.type === 'casa')
+  const baby = state.projects.find((project) => project.type === 'bebe')
+  const reserveAccount = state.accounts.find((account) => account.goalId === state.projects.find((project) => project.type === 'reserva_emergencia')?.id)
+  const previousIncomplete = state.financialMonths.find((month) => month.status === 'incompleto')
+  const items = [
+    !state.incomeSources.some((income) => income.expectedAmount > 0 || income.receivedAmount > 0) && {
+      text: 'Informe renda atual para calcular o gap familiar.',
+      route: 'rendas' as RouteKey,
+    },
+    snapshot.essentialCost <= 0 && {
+      text: 'Informe gastos essenciais para calcular a reserva de emergência.',
+      route: 'despesas' as RouteKey,
+    },
+    !home?.deadline && {
+      text: 'Defina a data alvo da casa para calcular a renda necessária.',
+      route: 'casa' as RouteKey,
+    },
+    !baby?.deadline && !state.profile.babyExpectedDate && {
+      text: 'Informe a previsão de nascimento para calcular a meta mensal do bebê.',
+      route: 'bebe' as RouteKey,
+    },
+    !reserveAccount && {
+      text: 'Crie ou vincule uma conta para a reserva.',
+      route: 'contas' as RouteKey,
+    },
+    state.creditCards.length === 0 && {
+      text: 'Configure um cartão para acompanhar faturas e parcelas.',
+      route: 'cartoes' as RouteKey,
+    },
+    previousIncomplete && {
+      text: `Feche o mês ${readableMonth(previousIncomplete.month)} para melhorar o histórico.`,
+      route: 'regularizacao' as RouteKey,
+    },
+  ].filter(Boolean) as Array<{ text: string; route: RouteKey }>
+
+  if (!items.length) {
+    return <p className="empty-copy">A estrutura principal está pronta. Continue lançando movimentações para refinar a análise.</p>
+  }
+
+  return (
+    <div className="item-list">
+      {items.map((item) => (
+        <div className="list-row action-row" key={item.text}>
+          <span>{item.text}</span>
+          <button type="button" onClick={() => setRoute(item.route)}>Configurar agora</button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function QuickEntry({
   state,
   addTransaction,
@@ -646,6 +748,10 @@ function QuickEntry({
           </button>
         </div>
         {parsed && <TransactionPreview transaction={parsed} state={state} />}
+      </Panel>
+
+      <Panel title="Novo lançamento">
+        <ManualTransactionForm state={state} onSave={addTransaction} />
       </Panel>
 
       <Panel title="Importação de extrato com IA">
@@ -691,12 +797,193 @@ function TransactionPreview({ transaction, state }: { transaction: Transaction; 
   )
 }
 
-function Transactions({ state, selectedMonth }: { state: AppState; selectedMonth: string }) {
+function ManualTransactionForm({
+  state,
+  onSave,
+  defaultDate,
+  defaultType = 'despesa',
+  defaultProjectId,
+}: {
+  state: AppState
+  onSave: (transaction: Transaction) => void
+  defaultDate?: string
+  defaultType?: Transaction['type']
+  defaultProjectId?: string
+}) {
+  const [form, setForm] = useState({
+    type: defaultType,
+    amount: 0,
+    transactionDate: defaultDate || todayIso(),
+    competenceMonth: competenceFromDate(defaultDate || todayIso()),
+    description: '',
+    categoryId: '',
+    projectId: defaultProjectId || '',
+    accountId: state.accounts[0]?.id || '',
+    destinationAccountId: '',
+    paymentMethod: 'pix',
+    status: 'confirmed' as Transaction['status'],
+    notes: '',
+  })
+
+  useEffect(() => {
+    if (defaultDate) {
+      queueMicrotask(() =>
+        setForm((current) => ({
+          ...current,
+          transactionDate: defaultDate,
+          competenceMonth: competenceFromDate(defaultDate),
+        })),
+      )
+    }
+  }, [defaultDate])
+
+  const save = () => {
+    if (!form.amount || !form.description.trim()) return
+    onSave({
+      id: makeId('tx'),
+      transactionDate: form.transactionDate,
+      competenceMonth: form.competenceMonth || competenceFromDate(form.transactionDate),
+      type: form.type,
+      amount: Math.abs(Number(form.amount)),
+      description: form.description,
+      categoryId: form.categoryId || undefined,
+      projectId: form.projectId || undefined,
+      accountId: form.accountId || undefined,
+      destinationAccountId: form.destinationAccountId || undefined,
+      paymentMethod: form.paymentMethod,
+      status: form.status,
+      source: 'manual',
+      notes: form.notes || undefined,
+      syncStatus: 'salvo_localmente',
+    })
+    setForm((current) => ({ ...current, amount: 0, description: '', notes: '' }))
+  }
+
+  return (
+    <div className="manual-form">
+      <label className="field">
+        <span>Tipo</span>
+        <select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value as Transaction['type'] })}>
+          <option value="ganho">Ganho</option>
+          <option value="despesa">Despesa</option>
+          <option value="transferencia">Transferência</option>
+          <option value="reserva_objetivo">Reserva para objetivo</option>
+          <option value="compra_planejada">Compra planejada</option>
+          <option value="pagamento_cartao">Pagamento de cartão</option>
+          <option value="pagamento_parcela">Parcela</option>
+          <option value="reembolso">Reembolso</option>
+          <option value="ajuste_saldo">Ajuste de saldo</option>
+        </select>
+      </label>
+      <label className="field">
+        <span>Valor</span>
+        <input type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: Number(event.target.value) })} />
+      </label>
+      <label className="field">
+        <span>Data real</span>
+        <input
+          type="date"
+          value={form.transactionDate}
+          onChange={(event) =>
+            setForm({ ...form, transactionDate: event.target.value, competenceMonth: competenceFromDate(event.target.value) })
+          }
+        />
+      </label>
+      <label className="field">
+        <span>Competência</span>
+        <input type="month" value={form.competenceMonth} onChange={(event) => setForm({ ...form, competenceMonth: event.target.value })} />
+      </label>
+      <label className="field wide">
+        <span>Descrição</span>
+        <input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
+      </label>
+      <label className="field">
+        <span>Categoria</span>
+        <select value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>
+          <option value="">Sem categoria</option>
+          {state.categories.map((category) => (
+            <option key={category.id} value={category.id}>{category.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Projeto/meta</span>
+        <select value={form.projectId} onChange={(event) => setForm({ ...form, projectId: event.target.value })}>
+          <option value="">Sem projeto</option>
+          {state.projects.map((project) => (
+            <option key={project.id} value={project.id}>{project.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Conta origem</span>
+        <select value={form.accountId} onChange={(event) => setForm({ ...form, accountId: event.target.value })}>
+          <option value="">Sem conta</option>
+          {state.accounts.map((account) => (
+            <option key={account.id} value={account.id}>{account.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Conta destino</span>
+        <select value={form.destinationAccountId} onChange={(event) => setForm({ ...form, destinationAccountId: event.target.value })}>
+          <option value="">Não se aplica</option>
+          {state.accounts.map((account) => (
+            <option key={account.id} value={account.id}>{account.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Pagamento</span>
+        <select value={form.paymentMethod} onChange={(event) => setForm({ ...form, paymentMethod: event.target.value })}>
+          <option value="pix">Pix</option>
+          <option value="debito">Débito</option>
+          <option value="credito">Crédito</option>
+          <option value="dinheiro">Dinheiro</option>
+          <option value="boleto">Boleto</option>
+          <option value="transferencia">Transferência</option>
+          <option value="outro">Outro</option>
+        </select>
+      </label>
+      <label className="field">
+        <span>Status</span>
+        <select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as Transaction['status'] })}>
+          <option value="confirmed">Confirmado</option>
+          <option value="planned">Previsto</option>
+          <option value="cancelled">Cancelado</option>
+        </select>
+      </label>
+      <label className="field wide">
+        <span>Observações</span>
+        <input value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+      </label>
+      <button className="primary-button" type="button" onClick={save}>
+        <Plus size={18} />
+        Salvar lançamento
+      </button>
+    </div>
+  )
+}
+
+function Transactions({
+  state,
+  selectedMonth,
+  addTransaction,
+}: {
+  state: AppState
+  selectedMonth: string
+  addTransaction: (transaction: Transaction) => void
+}) {
   const transactions = state.transactions.filter((transaction) => transaction.competenceMonth === selectedMonth)
   return (
-    <Panel title="Lista de transações">
-      <TransactionTable transactions={transactions} state={state} />
-    </Panel>
+    <div className="page-grid">
+      <Panel title="Novo lançamento">
+        <ManualTransactionForm state={state} onSave={addTransaction} />
+      </Panel>
+      <Panel title="Lista de transações">
+        <TransactionTable transactions={transactions} state={state} />
+      </Panel>
+    </div>
   )
 }
 
@@ -842,17 +1129,59 @@ function CardsPage({
   state,
   updateState,
   snapshot,
+  addTransaction,
 }: {
   state: AppState
   updateState: (updater: (current: AppState) => AppState) => void
   snapshot: PlanningSnapshot
+  addTransaction: (transaction: Transaction) => void
 }) {
   const [purchase, setPurchase] = useState({ description: 'Compra parcelada', amount: 120, installments: 3 })
   const card = state.creditCards[0]
+  const futureInvoice = state.cardPurchases.reduce((sum, item) => {
+    const parcel = item.amount / Math.max(item.installments, 1)
+    return sum + parcel * Math.max(item.installments - item.currentInstallment, 0)
+  }, 0)
+  if (!card) {
+    return (
+      <div className="page-grid">
+        <Panel title="Cartão de crédito">
+          <div className="empty-state">
+            <p>Nenhum cartão cadastrado ainda. Cadastre limite, fechamento e vencimento para calcular fatura atual, futura e impacto na renda.</p>
+            <button
+              type="button"
+              onClick={() =>
+                updateState((current) => ({
+                  ...current,
+                  creditCards: [
+                    {
+                      id: makeId('card'),
+                      name: 'Cartão principal',
+                      limitAmount: 0,
+                      closingDay: 20,
+                      dueDay: 28,
+                      active: true,
+                    },
+                    ...current.creditCards,
+                  ],
+                }))
+              }
+            >
+              Criar cartão
+            </button>
+          </div>
+        </Panel>
+        <Panel title="Pagamento de cartão">
+          <ManualTransactionForm state={state} onSave={addTransaction} defaultType="pagamento_cartao" />
+        </Panel>
+      </div>
+    )
+  }
   return (
     <div className="page-grid">
       <section className="kpi-grid">
         <Kpi title="Fatura prevista" value={money(snapshot.cardImpact)} icon={CreditCard} tone="warn" />
+        <Kpi title="Faturas futuras" value={money(futureInvoice)} icon={CalendarCheck} tone="neutral" />
         <Kpi title="Comprometimento" value={percent(snapshot.cardIncomeRate)} icon={AlertTriangle} tone={snapshot.cardIncomeRate > 0.35 ? 'danger' : 'neutral'} />
         <Kpi title="Limite" value={money(card?.limitAmount || 0)} icon={Wallet} tone="neutral" />
       </section>
@@ -887,6 +1216,9 @@ function CardsPage({
         </div>
         <CardPurchaseList purchases={state.cardPurchases} cards={state.creditCards} />
       </Panel>
+      <Panel title="Pagamento de cartão">
+        <ManualTransactionForm state={state} onSave={addTransaction} defaultType="pagamento_cartao" />
+      </Panel>
     </div>
   )
 }
@@ -913,11 +1245,40 @@ function AccountsPage({
   state: AppState
   updateState: (updater: (current: AppState) => AppState) => void
 }) {
-  const [name, setName] = useState('Nova conta')
+  const [draft, setDraft] = useState({
+    name: 'Nova conta',
+    type: 'corrente' as AppState['accounts'][number]['type'],
+    initialBalance: 0,
+    currentBalance: 0,
+    isGoalAccount: false,
+    goalId: '',
+    active: true,
+  })
   return (
     <Panel title="Contas e caixinhas">
-      <div className="form-inline">
-        <input value={name} onChange={(event) => setName(event.target.value)} />
+      <div className="manual-form">
+        <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as AppState['accounts'][number]['type'] })}>
+          <option value="corrente">Corrente</option>
+          <option value="poupanca">Poupança</option>
+          <option value="caixinha">Caixinha</option>
+          <option value="dinheiro">Dinheiro</option>
+          <option value="cartao_credito">Cartão de crédito</option>
+          <option value="investimento">Investimento</option>
+          <option value="outro">Outro</option>
+        </select>
+        <input type="number" value={draft.initialBalance} onChange={(event) => setDraft({ ...draft, initialBalance: Number(event.target.value) })} />
+        <input type="number" value={draft.currentBalance} onChange={(event) => setDraft({ ...draft, currentBalance: Number(event.target.value) })} />
+        <select value={draft.isGoalAccount ? 'sim' : 'nao'} onChange={(event) => setDraft({ ...draft, isGoalAccount: event.target.value === 'sim' })}>
+          <option value="nao">Conta comum</option>
+          <option value="sim">Vinculada a meta</option>
+        </select>
+        <select value={draft.goalId} onChange={(event) => setDraft({ ...draft, goalId: event.target.value })}>
+          <option value="">Sem meta</option>
+          {state.projects.map((project) => (
+            <option key={project.id} value={project.id}>{project.name}</option>
+          ))}
+        </select>
         <button
           type="button"
           onClick={() =>
@@ -927,12 +1288,8 @@ function AccountsPage({
                 ...current.accounts,
                 {
                   id: makeId('acc'),
-                  name,
-                  type: 'corrente',
-                  initialBalance: 0,
-                  currentBalance: 0,
-                  isGoalAccount: false,
-                  active: true,
+                  ...draft,
+                  goalId: draft.goalId || undefined,
                 },
               ],
             }))
@@ -945,9 +1302,29 @@ function AccountsPage({
       <div className="account-grid">
         {state.accounts.map((account) => (
           <article className="account-card" key={account.id}>
-            <strong>{account.name}</strong>
+            <input
+              value={account.name}
+              onChange={(event) =>
+                updateState((current) => ({
+                  ...current,
+                  accounts: current.accounts.map((item) => (item.id === account.id ? { ...item, name: event.target.value } : item)),
+                }))
+              }
+            />
             <span>{account.type}</span>
             <b>{money(account.currentBalance)}</b>
+            <small>{account.isGoalAccount ? `Meta: ${nameById(state.projects, account.goalId)}` : 'Saldo livre'}</small>
+            <button
+              type="button"
+              onClick={() =>
+                updateState((current) => ({
+                  ...current,
+                  accounts: current.accounts.map((item) => (item.id === account.id ? { ...item, active: !item.active } : item)),
+                }))
+              }
+            >
+              {account.active ? 'Ativa' : 'Inativa'}
+            </button>
           </article>
         ))}
       </div>
@@ -1005,16 +1382,25 @@ function ProjectFocus({
   updateState,
   snapshot,
   type,
+  addTransaction,
 }: {
   state: AppState
   updateState: (updater: (current: AppState) => AppState) => void
   snapshot: PlanningSnapshot
   type: Project['type']
+  addTransaction: (transaction: Transaction) => void
 }) {
   const project = state.projects.find((item) => item.type === type)
   const [itemName, setItemName] = useState(type === 'bebe' ? 'Carrinho' : 'Item planejado')
 
-  if (!project) return <Panel title="Projeto"><p>Projeto não configurado.</p></Panel>
+  if (!project) {
+    return (
+      <Panel title="Módulo em preparação">
+        <p>Este módulo ainda não tinha sido criado no seu perfil, mas a plataforma pode criá-lo automaticamente.</p>
+        <button type="button" onClick={() => updateState((current) => ensureBaseState(current))}>Criar estrutura padrão</button>
+      </Panel>
+    )
+  }
 
   const items = state.plannedItems.filter((item) => item.projectId === project.id)
   const monthly =
@@ -1036,6 +1422,7 @@ function ProjectFocus({
       </section>
       <Panel title={project.name}>
         <ProgressRow label="Progresso" value={project.reservedAmount + project.spentAmount} max={project.targetAmount} />
+        <ProjectEditor state={state} project={project} updateState={updateState} type={type} />
         {type === 'reserva_emergencia' && (
           <div className="mini-metrics">
             <span>Mínima: {money(snapshot.emergencyMinimum)}</span>
@@ -1072,13 +1459,255 @@ function ProjectFocus({
             Adicionar
           </button>
         </div>
-        <PlannedItemList items={items} />
+        <PlannedItemsManager project={project} items={items} updateState={updateState} addTransaction={addTransaction} />
+      </Panel>
+      <Panel title="Novo lançamento vinculado">
+        <ManualTransactionForm state={state} onSave={addTransaction} defaultType={type === 'reserva_emergencia' ? 'reserva_objetivo' : 'despesa'} defaultProjectId={project.id} />
       </Panel>
     </div>
   )
 }
 
-function PlannedItemList({ items }: { items: PlannedItem[] }) {
+function ProjectEditor({
+  state,
+  project,
+  updateState,
+  type,
+}: {
+  state: AppState
+  project: Project
+  updateState: (updater: (current: AppState) => AppState) => void
+  type: Project['type']
+}) {
+  const updateProject = (patch: Partial<Project>) => {
+    updateState((current) => ({
+      ...current,
+      projects: current.projects.map((item) => (item.id === project.id ? { ...item, ...patch } : item)),
+    }))
+  }
+
+  return (
+    <div className="project-editor">
+      <label className="field">
+        <span>Valor total</span>
+        <input type="number" value={project.targetAmount} onChange={(event) => updateProject({ targetAmount: Number(event.target.value) })} />
+      </label>
+      <label className="field">
+        <span>Prazo</span>
+        <input type="date" value={project.deadline || ''} onChange={(event) => updateProject({ deadline: event.target.value })} />
+      </label>
+      <label className="field">
+        <span>Reservado</span>
+        <input type="number" value={project.reservedAmount} onChange={(event) => updateProject({ reservedAmount: Number(event.target.value) })} />
+      </label>
+      <label className="field">
+        <span>Gasto</span>
+        <input type="number" value={project.spentAmount} onChange={(event) => updateProject({ spentAmount: Number(event.target.value) })} />
+      </label>
+      <label className="field">
+        <span>Prioridade</span>
+        <input type="number" value={project.priority} onChange={(event) => updateProject({ priority: Number(event.target.value) })} />
+      </label>
+      <label className="field">
+        <span>Peso</span>
+        <input type="number" value={project.weight} onChange={(event) => updateProject({ weight: Number(event.target.value) })} />
+      </label>
+      <label className="field">
+        <span>Conta vinculada</span>
+        <select value={project.linkedAccountId || ''} onChange={(event) => updateProject({ linkedAccountId: event.target.value || undefined })}>
+          <option value="">Sem conta</option>
+          {state.accounts.map((account) => (
+            <option key={account.id} value={account.id}>{account.name}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>Status</span>
+        <select value={project.status} onChange={(event) => updateProject({ status: event.target.value as Project['status'] })}>
+          <option value="active">Ativa</option>
+          <option value="paused">Pausada</option>
+          <option value="done">Concluída</option>
+        </select>
+      </label>
+      <label className="field">
+        <span>Obrigatória</span>
+        <select value={project.isMandatory ? 'sim' : 'nao'} onChange={(event) => updateProject({ isMandatory: event.target.value === 'sim' })}>
+          <option value="sim">Sim</option>
+          <option value="nao">Não</option>
+        </select>
+      </label>
+      {(type === 'casa' || type === 'carro') && (
+        <>
+          <label className="field">
+            <span>Custo inicial</span>
+            <input type="number" value={project.initialCost || 0} onChange={(event) => updateProject({ initialCost: Number(event.target.value) })} />
+          </label>
+          <label className="field">
+            <span>Custo mensal futuro</span>
+            <input type="number" value={project.futureMonthlyCost || 0} onChange={(event) => updateProject({ futureMonthlyCost: Number(event.target.value) })} />
+          </label>
+        </>
+      )}
+      {type === 'carro' && (
+        <>
+          <label className="field">
+            <span>Entrada</span>
+            <input type="number" value={project.carDownPayment || 0} onChange={(event) => updateProject({ carDownPayment: Number(event.target.value) })} />
+          </label>
+          <label className="field">
+            <span>Parcela</span>
+            <input type="number" value={project.carInstallment || 0} onChange={(event) => updateProject({ carInstallment: Number(event.target.value) })} />
+          </label>
+          <label className="field">
+            <span>Combustível</span>
+            <input type="number" value={project.carFuel || 0} onChange={(event) => updateProject({ carFuel: Number(event.target.value) })} />
+          </label>
+        </>
+      )}
+      {type === 'reserva_emergencia' && (
+        <>
+          <label className="field">
+            <span>Custo essencial atual</span>
+            <input type="number" value={project.currentEssentialCost || 0} onChange={(event) => updateProject({ currentEssentialCost: Number(event.target.value) })} />
+          </label>
+          <label className="field">
+            <span>Custo essencial futuro</span>
+            <input type="number" value={project.futureEssentialCost || 0} onChange={(event) => updateProject({ futureEssentialCost: Number(event.target.value) })} />
+          </label>
+        </>
+      )}
+    </div>
+  )
+}
+
+function PlannedItemsManager({
+  project,
+  items,
+  updateState,
+  addTransaction,
+}: {
+  project: Project
+  items: PlannedItem[]
+  updateState: (updater: (current: AppState) => AppState) => void
+  addTransaction: (transaction: Transaction) => void
+}) {
+  const [draft, setDraft] = useState({
+    name: '',
+    category: '',
+    estimatedAmount: 0,
+    realAmount: 0,
+    priority: 'media' as PlannedItem['priority'],
+    status: 'planejado' as PlannedItem['status'],
+    deadline: '',
+    accountId: '',
+    notes: '',
+    referenceUrl: '',
+  })
+
+  const suggested =
+    project.type === 'bebe'
+      ? ['Fraldas', 'Roupinhas', 'Berço', 'Carrinho', 'Bebê conforto', 'Banheira', 'Bolsa maternidade', 'Produtos de higiene', 'Consultas/exames']
+      : project.type === 'casa'
+        ? ['Geladeira', 'Fogão', 'Cama', 'Colchão', 'Guarda-roupa', 'Mesa', 'Cadeiras', 'Máquina de lavar', 'Utensílios de cozinha', 'Aluguel previsto', 'Energia', 'Água', 'Internet']
+        : []
+
+  const addItem = (item: Partial<PlannedItem> = {}) => {
+    const name = item.name || draft.name
+    if (!name) return
+    updateState((current) => ({
+      ...current,
+      plannedItems: [
+        ...current.plannedItems,
+        {
+          id: makeId('item'),
+          projectId: project.id,
+          name,
+          category: item.category || draft.category || project.name,
+          estimatedAmount: item.estimatedAmount ?? draft.estimatedAmount,
+          realAmount: item.realAmount ?? draft.realAmount,
+          priority: item.priority || draft.priority,
+          status: item.status || draft.status,
+          deadline: draft.deadline || undefined,
+          accountId: draft.accountId || undefined,
+          notes: draft.notes || undefined,
+          referenceUrl: draft.referenceUrl || undefined,
+        },
+      ],
+    }))
+    setDraft((current) => ({ ...current, name: '', estimatedAmount: 0, realAmount: 0 }))
+  }
+
+  const markPaid = (item: PlannedItem) => {
+    const amount = item.realAmount || item.estimatedAmount
+    addTransaction({
+      id: makeId('tx'),
+      transactionDate: todayIso(),
+      competenceMonth: competenceFromDate(todayIso()),
+      type: 'compra_planejada',
+      amount,
+      description: item.name,
+      projectId: project.id,
+      accountId: item.accountId,
+      paymentMethod: 'pix',
+      status: 'confirmed',
+      source: 'manual',
+      notes: item.notes,
+      syncStatus: 'salvo_localmente',
+    })
+    updateState((current) => ({
+      ...current,
+      plannedItems: current.plannedItems.map((planned) =>
+        planned.id === item.id ? { ...planned, status: 'pago', purchasedAt: todayIso(), realAmount: amount } : planned,
+      ),
+    }))
+  }
+
+  return (
+    <div className="item-manager">
+      {!items.length && (
+        <div className="empty-state">
+          <p>
+            {project.type === 'bebe'
+              ? 'Nenhum item do enxoval cadastrado ainda. Comece adicionando os itens principais para calcular quanto falta até o nascimento.'
+              : project.type === 'casa'
+                ? 'Nenhum item da casa cadastrado ainda. Adicione móveis, eletrodomésticos, aluguel/parcela e custos de mudança para calcular a renda necessária.'
+                : project.type === 'carro'
+                  ? 'O carro ainda não foi planejado. Você pode simular compra, financiamento, combustível, manutenção e custo mensal real.'
+                  : 'Cadastre os itens desta meta para acompanhar prazo, saldo e prioridade.'}
+          </p>
+          {!!suggested.length && <button type="button" onClick={() => suggested.forEach((name) => addItem({ name }))}>Gerar lista inicial sugerida</button>}
+        </div>
+      )}
+      <div className="manual-form">
+        <input placeholder="Nome" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <input placeholder="Categoria" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} />
+        <input type="number" placeholder="Estimado" value={draft.estimatedAmount} onChange={(event) => setDraft({ ...draft, estimatedAmount: Number(event.target.value) })} />
+        <input type="number" placeholder="Real" value={draft.realAmount} onChange={(event) => setDraft({ ...draft, realAmount: Number(event.target.value) })} />
+        <select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as PlannedItem['priority'] })}>
+          <option value="baixa">Baixa</option>
+          <option value="media">Média</option>
+          <option value="alta">Alta</option>
+          <option value="critica">Crítica</option>
+        </select>
+        <select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as PlannedItem['status'] })}>
+          <option value="planejado">Planejado</option>
+          <option value="pesquisando">Pesquisando</option>
+          <option value="reservado">Reservado</option>
+          <option value="comprado">Comprado</option>
+          <option value="pago">Pago</option>
+          <option value="recebido">Recebido</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+        <input type="date" value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} />
+        <input placeholder="Link de referência" value={draft.referenceUrl} onChange={(event) => setDraft({ ...draft, referenceUrl: event.target.value })} />
+        <button type="button" onClick={() => addItem()}>Adicionar item</button>
+      </div>
+      <PlannedItemList items={items} onPaid={markPaid} />
+    </div>
+  )
+}
+
+function PlannedItemList({ items, onPaid }: { items: PlannedItem[]; onPaid?: (item: PlannedItem) => void }) {
   return (
     <div className="item-list">
       {items.map((item) => (
@@ -1088,6 +1717,7 @@ function PlannedItemList({ items }: { items: PlannedItem[] }) {
           <span>{item.priority}</span>
           <span>{item.status}</span>
           <span>{money(item.realAmount || item.estimatedAmount)}</span>
+          {onPaid && <button type="button" onClick={() => onPaid(item)}>Marcar pago</button>}
         </div>
       ))}
     </div>
@@ -1119,21 +1749,39 @@ function Regularization({
   state,
   updateState,
   selectedMonth,
+  addTransaction,
 }: {
   state: AppState
   updateState: (updater: (current: AppState) => AppState) => void
   selectedMonth: string
+  addTransaction: (transaction: Transaction) => void
 }) {
   const reviews = state.dayReviews.filter((review) => review.competenceMonth === selectedMonth)
   const pending = reviews.filter((review) => review.status === 'pending')
+  const [quickByDay, setQuickByDay] = useState<Record<string, string>>({})
 
   const markDay = (review: DayReview, status: DayReview['status']) => {
-    updateState((current) => ({
-      ...current,
-      dayReviews: current.dayReviews.map((item) =>
-        item.id === review.id ? { ...item, status, reviewedAt: new Date().toISOString() } : item,
-      ),
-    }))
+    updateState((current) =>
+      recalculateFinancialMonths({
+        ...current,
+        dayReviews: current.dayReviews.map((item) =>
+          item.id === review.id ? { ...item, status, reviewedAt: new Date().toISOString() } : item,
+        ),
+      }),
+    )
+  }
+
+  const saveQuickForDay = (review: DayReview, forcedType?: Transaction['type']) => {
+    const text = quickByDay[review.date]
+    const parsed = text ? parseQuickEntry(`${text} ${formatShortDate(review.date)}`, state) : null
+    if (!parsed) return
+    addTransaction({
+      ...parsed,
+      type: forcedType || parsed.type,
+      transactionDate: review.date,
+      competenceMonth: review.competenceMonth,
+    })
+    setQuickByDay((current) => ({ ...current, [review.date]: '' }))
   }
 
   return (
@@ -1151,6 +1799,16 @@ function Regularization({
           <div className={`day-cell ${review.status}`} key={review.id}>
             <strong>{formatShortDate(review.date)}</strong>
             <span>{review.status}</span>
+            <input
+              value={quickByDay[review.date] || ''}
+              onChange={(event) => setQuickByDay((current) => ({ ...current, [review.date]: event.target.value }))}
+              placeholder="50 gasolina pix"
+            />
+            <div>
+              <button type="button" onClick={() => saveQuickForDay(review, 'despesa')}>+ gasto</button>
+              <button type="button" onClick={() => saveQuickForDay(review, 'ganho')}>+ ganho</button>
+            </div>
+            <DayTransactions state={state} date={review.date} />
             {review.status === 'pending' && (
               <div>
                 <button type="button" onClick={() => markDay(review, 'reviewed')}>Revisado</button>
@@ -1161,6 +1819,22 @@ function Regularization({
         ))}
       </div>
     </Panel>
+  )
+}
+
+function DayTransactions({ state, date }: { state: AppState; date: string }) {
+  const transactions = state.transactions.filter((transaction) => transaction.transactionDate === date)
+  const total = transactions
+    .filter((transaction) => transaction.type !== 'ganho')
+    .reduce((sum, transaction) => sum + transaction.amount, 0)
+
+  return (
+    <div className="day-transactions">
+      <small>Total do dia: {money(total)}</small>
+      {transactions.map((transaction) => (
+        <span key={transaction.id}>{transaction.description}: {money(transaction.amount)}</span>
+      ))}
+    </div>
   )
 }
 
@@ -1228,6 +1902,113 @@ function Slider({ label, value, setValue, max }: { label: string; value: number;
   )
 }
 
+function HistoryPage({ state, selectedMonth }: { state: AppState; selectedMonth: string }) {
+  const months = state.financialMonths
+  const categoryRows = state.categories.map((category) => ({
+    name: category.name,
+    amount: state.transactions
+      .filter((transaction) => transaction.categoryId === category.id && transaction.type !== 'ganho')
+      .reduce((sum, transaction) => sum + transaction.amount, 0),
+  })).filter((row) => row.amount > 0)
+  const current = months.find((month) => month.month === selectedMonth)
+  const lastClosed = [...months].reverse().find((month) => month.status === 'fechado')
+
+  return (
+    <div className="page-grid">
+      <section className="kpi-grid">
+        <Kpi title="Mês atual" value={current ? riskCopy[current.status === 'fechado' ? 'seguro' : current.status === 'incompleto' ? 'atencao' : 'arriscado'] : 'Sem dados'} icon={CalendarCheck} tone="neutral" />
+        <Kpi title="Último fechado" value={lastClosed ? readableMonth(lastClosed.month) : 'Nenhum'} icon={CheckCircle2} tone="good" />
+        <Kpi title="Meses incompletos" value={String(months.filter((month) => month.status === 'incompleto').length)} icon={AlertTriangle} tone="warn" />
+      </section>
+      <Panel title="Histórico mensal">
+        <div className="chart-box">
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={months.map((month) => ({ month: month.month, renda: month.totalIncome, gasto: month.totalExpense, essencial: month.totalExpense }))}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="month" />
+              <YAxis />
+              <Tooltip formatter={(value) => money(Number(value))} />
+              <Bar dataKey="renda" fill="#0f766e" />
+              <Bar dataKey="gasto" fill="#dc2626" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="empty-copy">Meses incompletos não são usados como referência confiável para média final.</p>
+      </Panel>
+      <Panel title="Gastos por categoria">
+        <TransactionCategoryChart rows={categoryRows} />
+      </Panel>
+    </div>
+  )
+}
+
+function TransactionCategoryChart({ rows }: { rows: Array<{ name: string; amount: number }> }) {
+  if (!rows.length) return <p className="empty-copy">Ainda não há gastos suficientes para análise por categoria.</p>
+
+  return (
+    <div className="chart-box">
+      <ResponsiveContainer width="100%" height={260}>
+        <BarChart data={rows}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis dataKey="name" />
+          <YAxis />
+          <Tooltip formatter={(value) => money(Number(value))} />
+          <Bar dataKey="amount" fill="#2563eb" radius={[6, 6, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
+function MonthlyPlanning({
+  state,
+  updateState,
+  snapshot,
+  selectedMonth,
+}: {
+  state: AppState
+  updateState: (updater: (current: AppState) => AppState) => void
+  snapshot: PlanningSnapshot
+  selectedMonth: string
+}) {
+  const [action, setAction] = useState('Uber, ElevenX, freelancer, corte de variável, adiar carro')
+
+  return (
+    <div className="page-grid">
+      <section className="kpi-grid">
+        <Kpi title="Renda esperada" value={money(snapshot.expectedIncome)} icon={CircleDollarSign} tone="neutral" />
+        <Kpi title="Renda necessária" value={money(snapshot.necessaryIncome)} icon={Wallet} tone="warn" />
+        <Kpi title="Gap do mês" value={money(snapshot.incomeGap)} icon={AlertTriangle} tone={snapshot.incomeGap > 0 ? 'danger' : 'good'} />
+      </section>
+      <Panel title={`Planejamento de ${readableMonth(selectedMonth)}`}>
+        <div className="settings-grid">
+          <label className="field">
+            <span>Meta de renda mensal</span>
+            <input
+              type="number"
+              value={state.settings.desiredMonthlyIncome}
+              onChange={(event) =>
+                updateState((current) => ({
+                  ...current,
+                  settings: { ...current.settings, desiredMonthlyIncome: Number(event.target.value) },
+                }))
+              }
+            />
+          </label>
+          <label className="field wide">
+            <span>Ações para bater a meta</span>
+            <input value={action} onChange={(event) => setAction(event.target.value)} />
+          </label>
+        </div>
+        <div className="decision-card">
+          <strong>{money(Math.max(snapshot.necessaryIncome - snapshot.currentIncome, 0))}</strong>
+          <span>é o valor que precisa entrar no mês atual para cumprir o plano.</span>
+        </div>
+      </Panel>
+    </div>
+  )
+}
+
 function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapshot }) {
   const [question, setQuestion] = useState('Qual é meu gap de renda para cumprir bebê, casa e reserva?')
   const [answer, setAnswer] = useState('')
@@ -1249,7 +2030,38 @@ function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapsh
   const ask = async () => {
     setLoading(true)
     try {
-      const prompt = `${question}\n\nDados: ${JSON.stringify({ snapshot, projects: state.projects, cards: state.cardPurchases })}`
+      const months = state.financialMonths.slice(-3).map((month) => month.month)
+      const recentTransactions = state.transactions.filter((transaction) => months.includes(transaction.competenceMonth))
+      const expensesByCategory = state.categories.map((category) => ({
+        category: category.name,
+        amount: recentTransactions
+          .filter((transaction) => transaction.categoryId === category.id && transaction.type !== 'ganho')
+          .reduce((sum, transaction) => sum + transaction.amount, 0),
+      }))
+      const prompt = `${question}
+
+Responda sempre no formato:
+1. Fatos
+2. Cálculos
+3. Interpretação
+4. Riscos
+5. Opções
+6. Recomendação
+7. Decisão final é do usuário
+
+Dados reais:
+${JSON.stringify({
+  snapshot,
+  projects: state.projects,
+  transactionsLast3Months: recentTransactions,
+  cardPurchases: state.cardPurchases,
+  plannedItems: state.plannedItems,
+  accounts: state.accounts,
+  pendingMonths: state.financialMonths.filter((month) => month.status !== 'fechado'),
+  expensesByCategory,
+  closedHistory: state.financialMonths.filter((month) => month.status === 'fechado'),
+  scenarios: state.scenarios,
+})}`
       const deepSeekAnswer = await askDeepSeek(prompt)
       setAnswer(deepSeekAnswer || fallbackAnswer())
     } catch {
@@ -1265,6 +2077,22 @@ function AiPage({ state, snapshot }: { state: AppState; snapshot: PlanningSnapsh
         <span>Pergunta</span>
         <textarea value={question} onChange={(event) => setQuestion(event.target.value)} rows={3} />
       </label>
+      <div className="prompt-grid">
+        {[
+          'Análise do mês',
+          'Análise de risco',
+          'Gap para morar junto',
+          'Gap para bebê',
+          'Decisão de compra',
+          'Decisão de parcelamento',
+          'Plano de renda necessária',
+          'Revisão do cartão',
+          'Prioridades da semana',
+          'Inconsistências do extrato',
+        ].map((prompt) => (
+          <button key={prompt} type="button" onClick={() => setQuestion(prompt)}>{prompt}</button>
+        ))}
+      </div>
       <button className="primary-button" type="button" onClick={ask} disabled={loading}>
         <Bot size={18} />
         {loading ? 'Analisando' : 'Analisar'}
@@ -1338,8 +2166,8 @@ function SettingsPage({
       </Panel>
       <Panel title="Integrações">
         <div className="mini-metrics">
-          <span>Supabase: {supabase ? 'conectado' : 'aguardando VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY'}</span>
-          <span>DeepSeek: {hasDeepSeekConfig ? 'conectado' : 'aguardando VITE_DEEPSEEK_API_KEY'}</span>
+          <span>Supabase: {supabase ? 'conectado' : 'modo local-first; dados salvos neste navegador'}</span>
+          <span>DeepSeek: {hasDeepSeekConfig ? 'conectado' : 'IA avançada pausada; cálculos continuam funcionando'}</span>
           <span>Persistência: Dexie / IndexedDB</span>
         </div>
       </Panel>

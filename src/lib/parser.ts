@@ -11,6 +11,38 @@ const normalize = (value: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase()
 
+const incomeWords = [
+  'SALARIO',
+  'ESTAGIO',
+  'BOLSA',
+  'RECEBIDO',
+  'PIX RECEBIDO',
+  'RENDA',
+  'PAGAMENTO RECEBIDO',
+  'FREELANCER RECEBIDO',
+  'RECEBI',
+  'GANHEI',
+]
+
+const expenseWords = [
+  'GASOLINA',
+  'POSTO',
+  'MERCADO',
+  'LANCHE',
+  'PADARIA',
+  'REMEDIO',
+  'FARMACIA',
+  'DROGARIA',
+  'FRALDA',
+  'UBER',
+  'ONIBUS',
+  'ALUGUEL',
+  'ENERGIA',
+  'AGUA',
+  'INTERNET',
+  'FATURA',
+]
+
 const parseBrazilianDate = (text: string) => {
   const lower = normalize(text)
   const now = today()
@@ -65,12 +97,15 @@ const projectByKeyword = (state: AppState, text: string) => {
 }
 
 const transactionType = (text: string, amount: number): TransactionType => {
+  void amount
   const normalized = normalize(text)
-  if (amount > 0 && (normalized.includes('RECEBIDO') || normalized.includes('ESTAGIO') || normalized.includes('SALARIO'))) return 'ganho'
   if (normalized.includes('GUARDAR') || normalized.includes('RESERVAR') || normalized.includes('CAIXINHA')) return 'reserva_objetivo'
   if (normalized.includes('TRANSFERIR') || normalized.includes('ENVIADOS') || normalized.includes('TRANSFERENCIA')) return 'transferencia'
   if (normalized.includes('FATURA') || normalized.includes('PAGAMENTO CARTAO')) return 'pagamento_cartao'
-  if (amount > 0) return 'ganho'
+  if (text.trim().startsWith('+')) return 'ganho'
+  if (text.trim().startsWith('-')) return 'despesa'
+  if (expenseWords.some((word) => normalized.includes(word))) return 'despesa'
+  if (incomeWords.some((word) => normalized.includes(word))) return 'ganho'
   return 'despesa'
 }
 
