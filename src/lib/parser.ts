@@ -107,7 +107,7 @@ const accountByKeyword = (state: AppState, text: string) => {
 
 const projectByKeyword = (state: AppState, text: string) => {
   const normalized = normalize(text)
-  if (normalized.includes('BEBE') || normalized.includes('FRALDA')) return state.projects.find((project) => project.type === 'bebe')?.id
+  if (normalized.includes('BEB') || normalized.includes('ENXOVAL') || normalized.includes('FRALDA')) return state.projects.find((project) => project.type === 'bebe')?.id
   if (normalized.includes('CASA') || normalized.includes('MORAR')) return state.projects.find((project) => project.type === 'casa')?.id
   if (normalized.includes('CARRO')) return state.projects.find((project) => project.type === 'carro')?.id
   if (normalized.includes('RESERVA')) return state.projects.find((project) => project.type === 'reserva_emergencia')?.id
@@ -119,7 +119,9 @@ const transactionType = (text: string, amount: number): TransactionType => {
   const normalized = normalize(text)
   if (
     normalized.includes('GUARDAR') ||
+    normalized.includes('GUARDEI') ||
     normalized.includes('RESERVAR') ||
+    normalized.includes('RESERVEI') ||
     normalized.includes('CAIXINHA') ||
     (normalized.includes('RESERVA') && (normalized.includes('BEB') || normalized.includes('CASA') || normalized.includes('CARRO')))
   ) return 'reserva_objetivo'

@@ -6,6 +6,22 @@ export const money = (value: number) =>
     currency: 'BRL',
   }).format(Number.isFinite(value) ? value : 0)
 
+export const parseCurrencyBR = (value: string | number) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  const normalized = value
+    .replace(/[^\d,.-]/g, '')
+    .replace(/\.(?=\d{3}(?:\D|$))/g, '')
+    .replace(',', '.')
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+export const formatCurrencyBR = (value: number) =>
+  Number(value || 0).toLocaleString('pt-BR', {
+    minimumFractionDigits: value % 1 ? 2 : 0,
+    maximumFractionDigits: 2,
+  })
+
 export const percent = (value: number) =>
   `${Math.round((Number.isFinite(value) ? value : 0) * 100)}%`
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
+  Baby,
   Bot,
   CalendarCheck,
   CheckCircle2,
@@ -58,9 +59,11 @@ import { parseMoneyBR, parseQuickEntry, parseStatement } from './lib/parser'
 import {
   calculatePlanning,
   formatShortDate,
+  formatCurrencyBR,
   money,
   monthKey,
   monthlyGoal,
+  parseCurrencyBR,
   percent,
   readableMonth,
 } from './lib/planning'
@@ -100,14 +103,17 @@ type RouteKey =
 
 const navItems: Array<{ key: RouteKey; label: string; icon: typeof LayoutDashboard }> = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { key: 'onboarding', label: 'Plano Familiar', icon: Home },
+  { key: 'onboarding', label: 'Plano de Vida Familiar', icon: Home },
   { key: 'lancamento', label: 'Lançar Movimento', icon: Plus },
-  { key: 'metas', label: 'Projetos', icon: PiggyBank },
-  { key: 'contas', label: 'Contas', icon: Landmark },
+  { key: 'bebe', label: 'Bebê e Enxoval', icon: Baby },
+  { key: 'casa', label: 'Casa e Morar Junto', icon: Home },
+  { key: 'reserva', label: 'Reserva de Emergência', icon: Shield },
+  { key: 'contas', label: 'Contas e Caixinhas', icon: Landmark },
   { key: 'cartoes', label: 'Cartões e Dívidas', icon: CreditCard },
   { key: 'regularizacao', label: 'Regularização', icon: CalendarCheck },
   { key: 'historico', label: 'Histórico', icon: LineChartIcon },
   { key: 'ia', label: 'IA Financeira', icon: Bot },
+  { key: 'metas', label: 'Projetos', icon: PiggyBank },
   { key: 'configuracoes', label: 'Configurações', icon: Settings },
 ]
 
@@ -305,7 +311,7 @@ function App() {
 
   const page = {
     dashboard: <Dashboard state={state} snapshot={snapshot} selectedMonth={selectedMonth} setRoute={setRoute} />,
-    onboarding: <Onboarding state={state} updateState={updateState} setRoute={setRoute} />,
+    onboarding: <Onboarding state={state} updateState={updateState} setRoute={setRoute} snapshot={snapshot} />,
     lancamento: <QuickEntry state={state} snapshot={snapshot} addTransaction={addTransaction} updateState={updateState} selectedMonth={selectedMonth} />,
     transacoes: <Transactions state={state} selectedMonth={selectedMonth} addTransaction={addTransaction} />,
     rendas: <IncomePage state={state} updateState={updateState} snapshot={snapshot} />,
@@ -537,9 +543,9 @@ function Dashboard({
       <section className="hero-band">
         <div>
           <p className="eyebrow">{readableMonth(selectedMonth)}</p>
-          <h2>Centro de decisões da família</h2>
+          <h2>Decisão financeira da família</h2>
           <p>
-            Renda necessária, metas obrigatórias e riscos recalculados sempre que uma movimentação muda.
+            Para viver juntos com bebê e segurança, vocês precisam de {money(snapshot.necessaryIncome)} por mês. A renda familiar considerada é {money(snapshot.currentIncome)} e o gap é {money(snapshot.incomeGap)}.
           </p>
         </div>
         <div className="score-ring">
@@ -1281,7 +1287,7 @@ function IncomePage({
       <Panel title="Fontes de renda">
         <div className="form-inline">
           <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-          <input type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: Number(event.target.value) })} />
+          <input inputMode="decimal" value={form.amount ? formatCurrencyBR(form.amount) : ''} onChange={(event) => setForm({ ...form, amount: parseCurrencyBR(event.target.value) })} />
           <button
             type="button"
             disabled={!form.name.trim() || form.amount <= 0}
@@ -1437,7 +1443,7 @@ function CardsPage({
       <Panel title="Nova compra no cartão">
         <div className="form-inline">
           <input value={purchase.description} onChange={(event) => setPurchase({ ...purchase, description: event.target.value })} />
-          <input type="number" value={purchase.amount} onChange={(event) => setPurchase({ ...purchase, amount: Number(event.target.value) })} />
+        <input inputMode="decimal" value={purchase.amount ? formatCurrencyBR(purchase.amount) : ''} onChange={(event) => setPurchase({ ...purchase, amount: parseCurrencyBR(event.target.value) })} />
           <input type="number" value={purchase.installments} onChange={(event) => setPurchase({ ...purchase, installments: Number(event.target.value) })} />
           <button
             type="button"
@@ -1527,8 +1533,8 @@ function AccountsPage({
             <option value="investimento">Investimento</option>
             <option value="outro">Outro</option>
           </select>
-          <input type="number" value={draft.initialBalance} onChange={(event) => setDraft({ ...draft, initialBalance: Number(event.target.value) })} />
-          <input type="number" value={draft.currentBalance} onChange={(event) => setDraft({ ...draft, currentBalance: Number(event.target.value) })} />
+        <input inputMode="decimal" value={draft.initialBalance ? formatCurrencyBR(draft.initialBalance) : ''} onChange={(event) => setDraft({ ...draft, initialBalance: parseCurrencyBR(event.target.value) })} placeholder="Saldo inicial" />
+        <input inputMode="decimal" value={draft.currentBalance ? formatCurrencyBR(draft.currentBalance) : ''} onChange={(event) => setDraft({ ...draft, currentBalance: parseCurrencyBR(event.target.value) })} placeholder="Saldo atual" />
           <select value={draft.isGoalAccount ? 'sim' : 'nao'} onChange={(event) => setDraft({ ...draft, isGoalAccount: event.target.value === 'sim' })}>
             <option value="nao">Conta comum</option>
             <option value="sim">Vinculada a meta</option>
@@ -1714,6 +1720,12 @@ function ProjectFocus({
   }
 
   const items = state.plannedItems.filter((item) => item.projectId === project.id)
+  const estimatedItems = items.reduce((sum, item) => sum + item.estimatedAmount, 0)
+  const realItems = items.reduce((sum, item) => sum + item.realAmount, 0)
+  const purchasedItems = items
+    .filter((item) => item.status === 'comprado' || item.status === 'pago' || item.status === 'recebido')
+    .reduce((sum, item) => sum + (item.realAmount || item.estimatedAmount), 0)
+  const pendingItems = Math.max(estimatedItems - purchasedItems, 0)
   const monthly =
     type === 'reserva_emergencia'
       ? snapshot.monthlyReserveGoal
@@ -1730,6 +1742,7 @@ function ProjectFocus({
         <Kpi title="Reservado" value={money(project.reservedAmount)} icon={Shield} tone="good" />
         <Kpi title="Gasto" value={money(project.spentAmount)} icon={ReceiptText} tone="warn" />
         <Kpi title="Meta mensal" value={money(monthly)} icon={CalendarCheck} tone="danger" />
+        {(type === 'bebe' || type === 'casa') && <Kpi title="Itens pendentes" value={money(pendingItems)} icon={ReceiptText} tone="warn" />}
       </section>
       <Panel title={project.name}>
         <ProgressRow label="Progresso" value={project.reservedAmount + project.spentAmount} max={project.targetAmount} />
@@ -1742,7 +1755,14 @@ function ProjectFocus({
           </div>
         )}
       </Panel>
-      <Panel title="Itens planejados">
+      <Panel
+        title={type === 'bebe' ? 'Bebê e Enxoval' : type === 'casa' ? 'Casa e Morar Junto' : 'Itens planejados'}
+        action={
+          <span className="status-pill">
+            Estimado {money(estimatedItems)} | real {money(realItems)} | comprado {money(purchasedItems)}
+          </span>
+        }
+      >
         <div className="form-inline">
           <input value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Nome do item" />
           <button
@@ -1769,7 +1789,7 @@ function ProjectFocus({
             }}
           >
             <Plus size={18} />
-            Adicionar
+            {type === 'bebe' ? 'Adicionar item do bebê' : type === 'casa' ? 'Adicionar item da casa' : 'Adicionar'}
           </button>
         </div>
         <PlannedItemsManager state={state} project={project} items={items} updateState={updateState} addTransaction={addTransaction} />
@@ -1777,6 +1797,11 @@ function ProjectFocus({
       <Panel title="Novo lançamento vinculado">
         <ManualTransactionForm state={state} onSave={addTransaction} defaultType={type === 'reserva_emergencia' ? 'reserva_objetivo' : 'despesa'} defaultProjectId={project.id} />
       </Panel>
+      {(type === 'bebe' || type === 'casa' || type === 'reserva_emergencia') && (
+        <Panel title="IA do projeto">
+          <AiSummary state={state} snapshot={snapshot} />
+        </Panel>
+      )}
     </div>
   )
 }
@@ -1803,7 +1828,7 @@ function ProjectEditor({
     <div className="project-editor">
       <label className="field">
         <span>Valor total</span>
-        <input type="number" value={project.targetAmount} onChange={(event) => updateProject({ targetAmount: Number(event.target.value) })} />
+        <input inputMode="decimal" value={project.targetAmount ? formatCurrencyBR(project.targetAmount) : ''} onChange={(event) => updateProject({ targetAmount: parseCurrencyBR(event.target.value) })} />
       </label>
       <label className="field">
         <span>Prazo</span>
@@ -1811,11 +1836,11 @@ function ProjectEditor({
       </label>
       <label className="field">
         <span>Reservado</span>
-        <input type="number" value={project.reservedAmount} onChange={(event) => updateProject({ reservedAmount: Number(event.target.value) })} />
+        <input inputMode="decimal" value={project.reservedAmount ? formatCurrencyBR(project.reservedAmount) : ''} onChange={(event) => updateProject({ reservedAmount: parseCurrencyBR(event.target.value) })} />
       </label>
       <label className="field">
         <span>Gasto</span>
-        <input type="number" value={project.spentAmount} onChange={(event) => updateProject({ spentAmount: Number(event.target.value) })} />
+        <input inputMode="decimal" value={project.spentAmount ? formatCurrencyBR(project.spentAmount) : ''} onChange={(event) => updateProject({ spentAmount: parseCurrencyBR(event.target.value) })} />
       </label>
       <label className="field">
         <span>Prioridade</span>
@@ -1853,11 +1878,11 @@ function ProjectEditor({
         <>
           <label className="field">
             <span>Custo inicial</span>
-            <input type="number" value={project.initialCost || 0} onChange={(event) => updateProject({ initialCost: Number(event.target.value) })} />
+            <input inputMode="decimal" value={project.initialCost ? formatCurrencyBR(project.initialCost) : ''} onChange={(event) => updateProject({ initialCost: parseCurrencyBR(event.target.value) })} />
           </label>
           <label className="field">
             <span>{type === 'bebe' ? 'Gasto mensal futuro do bebê' : 'Custo mensal futuro'}</span>
-            <input type="number" value={project.futureMonthlyCost || 0} onChange={(event) => updateProject({ futureMonthlyCost: Number(event.target.value) })} />
+            <input inputMode="decimal" value={project.futureMonthlyCost ? formatCurrencyBR(project.futureMonthlyCost) : ''} onChange={(event) => updateProject({ futureMonthlyCost: parseCurrencyBR(event.target.value) })} />
           </label>
         </>
       )}
@@ -1865,15 +1890,15 @@ function ProjectEditor({
         <>
           <label className="field">
             <span>Entrada</span>
-            <input type="number" value={project.carDownPayment || 0} onChange={(event) => updateProject({ carDownPayment: Number(event.target.value) })} />
+            <input inputMode="decimal" value={project.carDownPayment ? formatCurrencyBR(project.carDownPayment) : ''} onChange={(event) => updateProject({ carDownPayment: parseCurrencyBR(event.target.value) })} />
           </label>
           <label className="field">
             <span>Parcela</span>
-            <input type="number" value={project.carInstallment || 0} onChange={(event) => updateProject({ carInstallment: Number(event.target.value) })} />
+            <input inputMode="decimal" value={project.carInstallment ? formatCurrencyBR(project.carInstallment) : ''} onChange={(event) => updateProject({ carInstallment: parseCurrencyBR(event.target.value) })} />
           </label>
           <label className="field">
             <span>Combustível</span>
-            <input type="number" value={project.carFuel || 0} onChange={(event) => updateProject({ carFuel: Number(event.target.value) })} />
+            <input inputMode="decimal" value={project.carFuel ? formatCurrencyBR(project.carFuel) : ''} onChange={(event) => updateProject({ carFuel: parseCurrencyBR(event.target.value) })} />
           </label>
         </>
       )}
@@ -1881,11 +1906,11 @@ function ProjectEditor({
         <>
           <label className="field">
             <span>Custo essencial atual</span>
-            <input type="number" value={project.currentEssentialCost || 0} onChange={(event) => updateProject({ currentEssentialCost: Number(event.target.value) })} />
+            <input inputMode="decimal" value={project.currentEssentialCost ? formatCurrencyBR(project.currentEssentialCost) : ''} onChange={(event) => updateProject({ currentEssentialCost: parseCurrencyBR(event.target.value) })} />
           </label>
           <label className="field">
             <span>Custo essencial futuro</span>
-            <input type="number" value={project.futureEssentialCost || 0} onChange={(event) => updateProject({ futureEssentialCost: Number(event.target.value) })} />
+            <input inputMode="decimal" value={project.futureEssentialCost ? formatCurrencyBR(project.futureEssentialCost) : ''} onChange={(event) => updateProject({ futureEssentialCost: parseCurrencyBR(event.target.value) })} />
           </label>
         </>
       )}
@@ -1921,9 +1946,9 @@ function PlannedItemsManager({
 
   const suggested =
     project.type === 'bebe'
-      ? ['Fraldas', 'Roupinhas', 'Berço', 'Carrinho', 'Bebê conforto', 'Banheira', 'Bolsa maternidade', 'Produtos de higiene', 'Consultas/exames']
+      ? ['Fraldas', 'Roupinhas', 'Berço', 'Carrinho', 'Bebê conforto', 'Banheira', 'Bolsa maternidade', 'Produtos de higiene', 'Mamadeiras', 'Lenços umedecidos', 'Consultas/exames', 'Farmácia', 'Móveis do bebê']
       : project.type === 'casa'
-        ? ['Geladeira', 'Fogão', 'Cama', 'Colchão', 'Guarda-roupa', 'Mesa', 'Cadeiras', 'Máquina de lavar', 'Utensílios de cozinha', 'Aluguel previsto', 'Energia', 'Água', 'Internet']
+        ? ['Geladeira', 'Fogão', 'Cama', 'Colchão', 'Guarda-roupa', 'Mesa', 'Cadeiras', 'Sofá', 'Máquina de lavar', 'Ventilador/ar-condicionado', 'Panelas', 'Pratos', 'Copos', 'Talheres', 'Utensílios de cozinha', 'Aluguel inicial', 'Caução', 'Energia', 'Água', 'Internet', 'Gás', 'Mercado inicial']
         : []
 
   const addItem = (item: Partial<PlannedItem> = {}) => {
@@ -1995,14 +2020,18 @@ function PlannedItemsManager({
                   ? 'O carro ainda não foi planejado. Você pode simular compra, financiamento, combustível, manutenção e custo mensal real.'
                   : 'Cadastre os itens desta meta para acompanhar prazo, saldo e prioridade.'}
           </p>
-          {!!suggested.length && <button type="button" onClick={() => suggested.forEach((name) => addItem({ name }))}>Gerar lista inicial sugerida</button>}
+          {!!suggested.length && (
+            <button type="button" onClick={() => suggested.forEach((name) => addItem({ name }))}>
+              {project.type === 'bebe' ? 'Gerar lista sugerida do enxoval' : 'Gerar lista sugerida da casa'}
+            </button>
+          )}
         </div>
       )}
       <div className="manual-form">
         <input placeholder="Nome" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
         <input placeholder="Categoria" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} />
-        <input type="number" placeholder="Estimado" value={draft.estimatedAmount} onChange={(event) => setDraft({ ...draft, estimatedAmount: Number(event.target.value) })} />
-        <input type="number" placeholder="Real" value={draft.realAmount} onChange={(event) => setDraft({ ...draft, realAmount: Number(event.target.value) })} />
+        <input inputMode="decimal" placeholder="Estimado" value={draft.estimatedAmount ? formatCurrencyBR(draft.estimatedAmount) : ''} onChange={(event) => setDraft({ ...draft, estimatedAmount: parseCurrencyBR(event.target.value) })} />
+        <input inputMode="decimal" placeholder="Real" value={draft.realAmount ? formatCurrencyBR(draft.realAmount) : ''} onChange={(event) => setDraft({ ...draft, realAmount: parseCurrencyBR(event.target.value) })} />
         <select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value as PlannedItem['priority'] })}>
           <option value="baixa">Baixa</option>
           <option value="media">Média</option>
@@ -2550,25 +2579,30 @@ function Onboarding({
   state,
   updateState,
   setRoute,
+  snapshot,
 }: {
   state: AppState
   updateState: (updater: (current: AppState) => AppState) => void
   setRoute: (route: RouteKey) => void
+  snapshot: PlanningSnapshot
 }) {
   const userIncome = state.incomeSources.find((income) => income.person === 'Usuário' || income.name === 'Renda atual do usuário')
   const partnerIncome = state.incomeSources.find((income) => income.person === 'Parceira' || income.name === 'Renda atual da parceira')
+  const variableIncome = state.incomeSources.find((income) => income.name === 'Renda variável esperada')
+  const familyHelp = state.incomeSources.find((income) => income.name === 'Ajuda familiar')
+  const otherIncome = state.incomeSources.find((income) => income.name === 'Outras rendas')
   const reserve = state.projects.find((project) => project.type === 'reserva_emergencia')
   const baby = state.projects.find((project) => project.type === 'bebe')
   const home = state.projects.find((project) => project.type === 'casa')
   const car = state.projects.find((project) => project.type === 'carro')
-  const upsertIncome = (name: string, person: string, value: number) => {
+  const upsertIncome = (name: string, person: string, value: number, kind: 'fixa' | 'variavel' | 'eventual' = 'fixa') => {
     updateState((current) => {
       const existing = current.incomeSources.find((income) => income.name === name)
       if (existing) {
         return {
           ...current,
           incomeSources: current.incomeSources.map((income) =>
-            income.id === existing.id ? { ...income, expectedAmount: value, receivedAmount: value, status: value > 0 ? 'recebida' : 'prevista' } : income,
+            income.id === existing.id ? { ...income, expectedAmount: value, receivedAmount: kind === 'fixa' ? value : 0, status: kind === 'fixa' && value > 0 ? 'recebida' : 'prevista' } : income,
           ),
         }
       }
@@ -2580,11 +2614,11 @@ function Onboarding({
             id: makeId('income'),
             name,
             person,
-            kind: 'fixa',
+            kind,
             expectedAmount: value,
-            receivedAmount: value,
+            receivedAmount: kind === 'fixa' ? value : 0,
             recurrence: 'mensal',
-            status: value > 0 ? 'recebida' : 'prevista',
+            status: kind === 'fixa' && value > 0 ? 'recebida' : 'prevista',
           },
         ],
       }
@@ -2593,7 +2627,32 @@ function Onboarding({
 
   return (
     <div className="page-grid">
-      <Panel title="Plano Familiar - diagnóstico inicial">
+      <section className="decision-month">
+        <div>
+          <p className="eyebrow">Quanto precisamos ganhar?</p>
+          <h2>Quanto precisamos ganhar para viver essa família?</h2>
+          <p>
+            Para morar junto, cuidar do bebê e formar reserva, vocês precisam de {money(snapshot.necessaryIncome)} por mês.
+            A renda familiar considerada hoje é {money(snapshot.currentIncome)} e o Gap do Plano Familiar é {money(snapshot.incomeGap)}.
+          </p>
+          <p className="empty-copy">
+            Este gap não significa que algo foi lançado errado. Ele mostra quanto falta de renda mensal para cumprir o Plano Familiar configurado.
+          </p>
+          <p className="empty-copy">
+            Prioridade agora: aumentar renda, montar reserva mínima, preparar bebê, preparar casa e adiar carro/investimentos enquanto houver gap nas metas obrigatórias.
+          </p>
+        </div>
+        <div className="decision-metrics">
+          <span>Renda prevista familiar: <strong>{money(snapshot.expectedIncome)}</strong></span>
+          <span>Renda confirmada no mês: <strong>{money(snapshot.confirmedIncome)}</strong></span>
+          <span>Renda pendente: <strong>{money(snapshot.pendingIncome)}</strong></span>
+          <span>Renda necessária: <strong>{money(snapshot.necessaryIncome)}</strong></span>
+          <span>Gap do Plano Familiar: <strong>{money(snapshot.incomeGap)}</strong></span>
+          <span>Status: <strong>{riskCopy[snapshot.risk]}</strong></span>
+        </div>
+      </section>
+
+      <Panel title="Etapa 1 - Renda familiar">
         <div className="settings-grid">
           <label className="field">
             <span>Nome do usuário</span>
@@ -2621,11 +2680,23 @@ function Onboarding({
           </label>
           <label className="field">
             <span>Renda atual do usuário</span>
-            <input type="number" value={userIncome?.receivedAmount || 0} onChange={(event) => upsertIncome('Renda atual do usuário', 'Usuário', Number(event.target.value))} />
+            <input inputMode="decimal" value={userIncome?.receivedAmount ? formatCurrencyBR(userIncome.receivedAmount) : ''} onChange={(event) => upsertIncome('Renda atual do usuário', 'Usuário', parseCurrencyBR(event.target.value))} />
           </label>
           <label className="field">
             <span>Renda atual da parceira</span>
-            <input type="number" value={partnerIncome?.receivedAmount || 0} onChange={(event) => upsertIncome('Renda atual da parceira', 'Parceira', Number(event.target.value))} />
+            <input inputMode="decimal" value={partnerIncome?.receivedAmount ? formatCurrencyBR(partnerIncome.receivedAmount) : ''} onChange={(event) => upsertIncome('Renda atual da parceira', 'Parceira', parseCurrencyBR(event.target.value))} />
+          </label>
+          <label className="field">
+            <span>Renda variável esperada</span>
+            <input inputMode="decimal" value={variableIncome?.expectedAmount ? formatCurrencyBR(variableIncome.expectedAmount) : ''} onChange={(event) => upsertIncome('Renda variável esperada', 'Família', parseCurrencyBR(event.target.value), 'variavel')} />
+          </label>
+          <label className="field">
+            <span>Ajuda familiar</span>
+            <input inputMode="decimal" value={familyHelp?.expectedAmount ? formatCurrencyBR(familyHelp.expectedAmount) : ''} onChange={(event) => upsertIncome('Ajuda familiar', 'Família', parseCurrencyBR(event.target.value), 'eventual')} />
+          </label>
+          <label className="field">
+            <span>Outras rendas</span>
+            <input inputMode="decimal" value={otherIncome?.expectedAmount ? formatCurrencyBR(otherIncome.expectedAmount) : ''} onChange={(event) => upsertIncome('Outras rendas', 'Família', parseCurrencyBR(event.target.value), 'eventual')} />
           </label>
           <label className="field">
             <span>Meses de reserva desejados</span>
@@ -2641,19 +2712,47 @@ function Onboarding({
         </div>
       </Panel>
 
-      {reserve && (
-        <Panel title="Reserva de emergência">
-          <ProjectEditor state={state} project={reserve} updateState={updateState} type="reserva_emergencia" />
-        </Panel>
-      )}
+      <Panel title="Resumo de renda">
+        <div className="mini-metrics">
+          <span>Renda prevista familiar total: {money(snapshot.expectedIncome)}</span>
+          <span>Renda confirmada por lançamentos: {money(snapshot.confirmedIncome)}</span>
+          <span>Renda pendente: {money(snapshot.pendingIncome)}</span>
+        </div>
+      </Panel>
+
       {baby && (
-        <Panel title="Bebê">
+        <Panel title="Etapa 3 - Bebê / filho">
           <ProjectEditor state={state} project={baby} updateState={updateState} type="bebe" />
+          <div className="mini-metrics">
+            <span>Falta para o bebê: {money(Math.max(baby.targetAmount - baby.reservedAmount - baby.spentAmount, 0))}</span>
+            <span>Meta mensal do bebê: {money(snapshot.monthlyBabyGoal)}</span>
+            <span>Impacto mensal futuro: {money(baby.futureMonthlyCost || 0)}</span>
+          </div>
+          <button type="button" onClick={() => setRoute('bebe')}>Abrir Bebê e Enxoval</button>
         </Panel>
       )}
       {home && (
-        <Panel title="Casa / morar junto">
+        <Panel title="Etapa 2 - Morar juntos / Casa">
           <ProjectEditor state={state} project={home} updateState={updateState} type="casa" />
+          <div className="mini-metrics">
+            <span>Custo mensal futuro da casa: {money(home.futureMonthlyCost || 0)}</span>
+            <span>Custo inicial para mudar: {money(home.initialCost || 0)}</span>
+            <span>Meta mensal da casa: {money(snapshot.monthlyHomeGoal)}</span>
+            <span>Impacto na renda necessária: {money((home.futureMonthlyCost || 0) + snapshot.monthlyHomeGoal)}</span>
+          </div>
+          <button type="button" onClick={() => setRoute('casa')}>Abrir Casa e Morar Junto</button>
+        </Panel>
+      )}
+      {reserve && (
+        <Panel title="Etapa 4 - Reserva de emergência">
+          <ProjectEditor state={state} project={reserve} updateState={updateState} type="reserva_emergencia" />
+          <div className="mini-metrics">
+            <span>Reserva mínima: {money(snapshot.emergencyMinimum)}</span>
+            <span>Reserva confortável: {money(snapshot.emergencyComfortable)}</span>
+            <span>Reserva ideal: {money(snapshot.emergencyIdeal)}</span>
+            <span>Meta mensal da reserva: {money(snapshot.monthlyReserveGoal)}</span>
+          </div>
+          <button type="button" onClick={() => setRoute('reserva')}>Abrir Reserva de Emergência</button>
         </Panel>
       )}
       {car && (
@@ -2661,6 +2760,19 @@ function Onboarding({
           <ProjectEditor state={state} project={car} updateState={updateState} type="carro" />
         </Panel>
       )}
+
+      <Panel title="Etapa 5 - Cartão e dívidas">
+        <div className="mini-metrics">
+          <span>Impacto do cartão neste mês: {money(snapshot.cardImpact)}</span>
+          <span>Comprometimento da renda: {percent(snapshot.cardIncomeRate)}</span>
+          <span>Cartões cadastrados: {state.creditCards.length}</span>
+        </div>
+        <button type="button" onClick={() => setRoute('cartoes')}>Abrir Cartões e Dívidas</button>
+      </Panel>
+
+      <Panel title="Recomendação da IA">
+        <AiSummary state={state} snapshot={snapshot} />
+      </Panel>
 
       <Panel title="Resumo do plano">
         <div className="button-row">
