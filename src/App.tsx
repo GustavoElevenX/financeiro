@@ -274,9 +274,21 @@ function App() {
       saveLocalState(state)
         .then(() => {
           if (supabase && user) {
+            const syncedTransactionIds = new Set(state.transactions.map((transaction) => transaction.id))
             setSyncMessage('Salvo localmente; sincronizando Supabase')
             return saveRemoteState(user.id, state)
-              .then(() => setSyncMessage('Sincronizado'))
+              .then(() => {
+                setSyncMessage('Sincronizado')
+                setState((current) => {
+                  let changed = false
+                  const transactions = current.transactions.map((transaction) => {
+                    if (!syncedTransactionIds.has(transaction.id) || transaction.syncStatus === 'sincronizado') return transaction
+                    changed = true
+                    return { ...transaction, syncStatus: 'sincronizado' as const }
+                  })
+                  return changed ? { ...current, transactions } : current
+                })
+              })
               .catch((error: Error) => setSyncMessage(`Pendente de sincronização: ${error.message}`))
           }
           setSyncMessage(supabase ? 'Salvo localmente - faça login para sincronizar com Supabase' : 'Salvo localmente')
@@ -312,7 +324,7 @@ function App() {
   const page = {
     dashboard: <Dashboard state={state} snapshot={snapshot} selectedMonth={selectedMonth} setRoute={setRoute} />,
     onboarding: <Onboarding state={state} updateState={updateState} setRoute={setRoute} snapshot={snapshot} />,
-    lancamento: <QuickEntry state={state} snapshot={snapshot} addTransaction={addTransaction} updateState={updateState} selectedMonth={selectedMonth} />,
+    lancamento: <QuickEntry state={state} snapshot={snapshot} addTransaction={addTransaction} updateState={updateState} selectedMonth={selectedMonth} cloudSyncActive={Boolean(supabase && user)} />,
     transacoes: <Transactions state={state} selectedMonth={selectedMonth} addTransaction={addTransaction} />,
     rendas: <IncomePage state={state} updateState={updateState} snapshot={snapshot} />,
     despesas: <ExpensesPage state={state} snapshot={snapshot} selectedMonth={selectedMonth} />,
@@ -878,12 +890,14 @@ function QuickEntry({
   addTransaction,
   updateState,
   selectedMonth,
+  cloudSyncActive,
 }: {
   state: AppState
   snapshot: PlanningSnapshot
   addTransaction: (transaction: Transaction) => void
   updateState: (updater: (current: AppState) => AppState) => void
   selectedMonth: string
+  cloudSyncActive: boolean
 }) {
   const [entry, setEntry] = useState('')
   const [statement, setStatement] = useState('')
@@ -976,7 +990,7 @@ function QuickEntry({
       {feedback && (
         <Panel title="Impacto no Plano Familiar">
           <div className="decision-card">
-            <strong>Salvo localmente</strong>
+            <strong>{cloudSyncActive ? 'Salvo; sincronizando com Supabase' : supabase ? 'Salvo localmente - faça login para ir ao banco' : 'Salvo localmente'}</strong>
             <span>{feedback}</span>
           </div>
         </Panel>
