@@ -167,22 +167,8 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
 export async function saveRemoteState(userId: string, state: AppState) {
   const client = requireSupabase()
 
-  const profilePayload = {
-    id: userId,
-    name: state.profile.name,
-    partner_name: state.profile.partnerName,
-    baby_expected_date: state.profile.babyExpectedDate || null,
-    onboarding_complete: state.onboardingComplete,
-    updated_at: new Date().toISOString(),
-  }
-  const { error: profileError } = await client.from('profiles').upsert(profilePayload)
-  if (profileError && isMissingColumnError(profileError)) {
-    const { baby_expected_date: _babyExpectedDate, onboarding_complete: _onboardingComplete, ...legacyProfilePayload } = profilePayload
-    void _babyExpectedDate
-    void _onboardingComplete
-    const { error: legacyProfileError } = await client.from('profiles').upsert(legacyProfilePayload)
-    if (legacyProfileError) throw legacyProfileError
-  } else if (profileError) throw profileError
+  const { error: profileError } = await client.from('profiles').upsert({ id: userId })
+  if (profileError) throw profileError
 
   const { error: settingsError } = await client.from('app_settings').upsert(toSettingsRow(userId, state.settings))
   if (settingsError) throw settingsError
@@ -207,10 +193,6 @@ async function upsertRows(table: string, rows: unknown[]) {
   if (!rows.length) return
   const { error } = await requireSupabase().from(table).upsert(rows)
   if (error) throw error
-}
-
-function isMissingColumnError(error: { code?: string; message?: string }) {
-  return error.code === 'PGRST204' || /schema cache|column/i.test(error.message || '')
 }
 
 function defaultSettings(): AppSettings {
