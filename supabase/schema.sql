@@ -12,6 +12,7 @@ create table if not exists profiles (
 );
 
 alter table profiles add column if not exists partner_name text;
+alter table profiles add column if not exists family_name text;
 alter table profiles add column if not exists baby_expected_date date;
 alter table profiles add column if not exists onboarding_complete boolean default false;
 

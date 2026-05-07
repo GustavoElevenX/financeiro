@@ -305,6 +305,13 @@ function App() {
     setState((current) => updater(current))
   }
 
+  const signOut = async () => {
+    if (supabase) await supabase.auth.signOut()
+    setUser(null)
+    setLocalMode(false)
+    setSyncMessage('Sessão encerrada. Entre novamente para sincronizar com Supabase')
+  }
+
   useEffect(() => {
     queueMicrotask(() => {
       setState((current) => recalculateFinancialMonths(ensureMonthReviews(ensureBaseState(current), selectedMonth)))
@@ -387,7 +394,7 @@ function App() {
           <Database size={18} />
           <div>
             <strong>{supabase ? syncMessage : 'Modo local-first'}</strong>
-            <small>{hasDeepSeekConfig ? 'IA avançada ativa' : 'Cálculos financeiros ativos'}</small>
+            <small>{user?.email ? `Logado: ${user.email}` : hasDeepSeekConfig ? 'IA avançada ativa' : 'Cálculos financeiros ativos'}</small>
           </div>
         </div>
       </aside>
@@ -406,6 +413,11 @@ function App() {
             <button className="icon-button" type="button" onClick={() => setRoute('onboarding')} title="Diagnóstico inicial">
               <RefreshCcw size={18} />
             </button>
+            {user && (
+              <button className="icon-button" type="button" onClick={signOut} title="Sair da conta">
+                Sair
+              </button>
+            )}
           </div>
         </header>
         {page}
