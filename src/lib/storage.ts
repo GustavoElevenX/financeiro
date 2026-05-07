@@ -171,15 +171,13 @@ export async function saveRemoteState(userId: string, state: AppState) {
     id: userId,
     name: state.profile.name,
     partner_name: state.profile.partnerName,
-    family_name: state.profile.familyName,
     baby_expected_date: state.profile.babyExpectedDate || null,
     onboarding_complete: state.onboardingComplete,
     updated_at: new Date().toISOString(),
   }
   const { error: profileError } = await client.from('profiles').upsert(profilePayload)
   if (profileError && isMissingColumnError(profileError)) {
-    const { family_name: _familyName, baby_expected_date: _babyExpectedDate, onboarding_complete: _onboardingComplete, ...legacyProfilePayload } = profilePayload
-    void _familyName
+    const { baby_expected_date: _babyExpectedDate, onboarding_complete: _onboardingComplete, ...legacyProfilePayload } = profilePayload
     void _babyExpectedDate
     void _onboardingComplete
     const { error: legacyProfileError } = await client.from('profiles').upsert(legacyProfilePayload)
