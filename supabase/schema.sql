@@ -16,9 +16,62 @@ alter table profiles add column if not exists family_name text;
 alter table profiles add column if not exists baby_expected_date date;
 alter table profiles add column if not exists onboarding_complete boolean default false;
 
+do $$
+declare
+  fk record;
+  table_name text;
+begin
+  if to_regclass('public.profiles') is not null then
+    for fk in
+      select conrelid::regclass as table_name, conname
+      from pg_constraint
+      where contype = 'f'
+        and confrelid = 'public.profiles'::regclass
+    loop
+      execute format('alter table %s drop constraint if exists %I', fk.table_name, fk.conname);
+    end loop;
+  end if;
+
+  foreach table_name in array array[
+    'family_members',
+    'accounts',
+    'categories',
+    'projects',
+    'income_sources',
+    'app_settings',
+    'transactions',
+    'financial_months',
+    'day_reviews',
+    'planned_items',
+    'debts',
+    'recurring_items',
+    'credit_cards',
+    'card_purchases',
+    'scenarios',
+    'ai_insights',
+    'classification_rules'
+  ]
+  loop
+    if to_regclass('public.' || table_name) is not null
+      and not exists (
+        select 1
+        from pg_constraint
+        where conname = table_name || '_user_id_fkey'
+          and conrelid = to_regclass('public.' || table_name)
+      )
+    then
+      execute format(
+        'alter table %I add constraint %I foreign key (user_id) references auth.users(id) on delete cascade',
+        table_name,
+        table_name || '_user_id_fkey'
+      );
+    end if;
+  end loop;
+end $$;
+
 create table if not exists family_members (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   role text,
   income_participant boolean default true,
@@ -27,7 +80,7 @@ create table if not exists family_members (
 
 create table if not exists accounts (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   type text not null,
   initial_balance numeric default 0,
@@ -41,7 +94,7 @@ create table if not exists accounts (
 
 create table if not exists categories (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   type text,
   is_essential boolean default false,
@@ -50,7 +103,7 @@ create table if not exists categories (
 
 create table if not exists projects (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   type text not null,
   target_amount numeric default 0,
@@ -91,7 +144,7 @@ alter table projects add column if not exists car_uber_income numeric default 0;
 
 create table if not exists income_sources (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   person text,
   kind text not null,
@@ -106,7 +159,7 @@ create table if not exists income_sources (
 );
 
 create table if not exists app_settings (
-  user_id uuid primary key references profiles(id) on delete cascade,
+  user_id uuid primary key references auth.users(id) on delete cascade,
   emergency_months numeric default 3,
   safety_margin_rate numeric default 0.12,
   desired_monthly_income numeric default 0,
@@ -126,7 +179,7 @@ end $$;
 
 create table if not exists transactions (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   transaction_date date not null,
   competence_month text not null,
   type text not null,
@@ -152,7 +205,7 @@ alter table transactions add column if not exists deleted_at timestamp with time
 
 create table if not exists financial_months (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   month text not null,
   year int not null,
   status text default 'em_andamento',
@@ -170,7 +223,7 @@ alter table financial_months add column if not exists reopened_at timestamp with
 
 create table if not exists day_reviews (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   date date not null,
   competence_month text not null,
   status text default 'pending',
@@ -181,7 +234,7 @@ create table if not exists day_reviews (
 
 create table if not exists planned_items (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   project_id uuid references projects(id) on delete cascade,
   name text not null,
   category text,
@@ -203,7 +256,7 @@ alter table planned_items add column if not exists deleted_at timestamp with tim
 
 create table if not exists debts (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   description text not null,
   total_amount numeric not null,
   installment_amount numeric default 0,
@@ -220,7 +273,7 @@ create table if not exists debts (
 
 create table if not exists recurring_items (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   description text not null,
   amount numeric not null,
   type text not null,
@@ -234,7 +287,7 @@ create table if not exists recurring_items (
 
 create table if not exists credit_cards (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   limit_amount numeric default 0,
   closing_day int,
@@ -246,7 +299,7 @@ create table if not exists credit_cards (
 
 create table if not exists card_purchases (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   card_id uuid references credit_cards(id) on delete cascade,
   purchase_date date not null,
   description text,
@@ -260,7 +313,7 @@ create table if not exists card_purchases (
 
 create table if not exists scenarios (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   name text not null,
   type text not null,
   monthly_income numeric default 0,
@@ -275,7 +328,7 @@ create table if not exists scenarios (
 
 create table if not exists ai_insights (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   type text not null,
   title text not null,
   content text not null,
@@ -288,7 +341,7 @@ create table if not exists ai_insights (
 
 create table if not exists classification_rules (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references profiles(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
   keyword text not null,
   category_id uuid references categories(id) on delete set null,
   project_id uuid references projects(id) on delete set null,

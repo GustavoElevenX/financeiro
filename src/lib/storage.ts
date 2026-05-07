@@ -80,7 +80,6 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
   const userId = user.id
 
   const [
-    profile,
     familyMembers,
     accounts,
     categories,
@@ -97,7 +96,6 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
     scenarios,
     settings,
   ] = await Promise.all([
-    client.from('profiles').select('*').eq('id', userId).maybeSingle(),
     client.from('family_members').select('*').eq('user_id', userId).order('created_at'),
     client.from('accounts').select('*').eq('user_id', userId).order('created_at'),
     client.from('categories').select('*').eq('user_id', userId).order('created_at'),
@@ -114,9 +112,6 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
     client.from('scenarios').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
     client.from('app_settings').select('*').eq('user_id', userId).maybeSingle(),
   ])
-
-  if (profile.error) throw profile.error
-  if (!profile.data) return null
 
   const errors = [
     familyMembers.error,
@@ -140,10 +135,10 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
 
   return {
     profile: {
-      name: profile.data.name || '',
-      partnerName: profile.data.partner_name || '',
-      familyName: profile.data.family_name || '',
-      babyExpectedDate: profile.data.baby_expected_date || '',
+      name: '',
+      partnerName: '',
+      familyName: '',
+      babyExpectedDate: '',
     },
     familyMembers: (familyMembers.data || []).map(fromFamilyMember),
     accounts: (accounts.data || []).map(fromAccount),
@@ -160,15 +155,12 @@ export async function loadRemoteState(user: User): Promise<AppState | null> {
     aiInsights: (aiInsights.data || []).map(fromAiInsight),
     scenarios: (scenarios.data || []).map(fromScenario),
     settings: settings.data ? fromSettings(settings.data) : defaultSettings(),
-    onboardingComplete: Boolean(profile.data.onboarding_complete),
+    onboardingComplete: Boolean((familyMembers.data || []).length || (accounts.data || []).length || (transactions.data || []).length),
   }
 }
 
 export async function saveRemoteState(userId: string, state: AppState) {
   const client = requireSupabase()
-
-  const { error: profileError } = await client.from('profiles').upsert({ id: userId })
-  if (profileError) throw profileError
 
   const { error: settingsError } = await client.from('app_settings').upsert(toSettingsRow(userId, state.settings))
   if (settingsError) throw settingsError
